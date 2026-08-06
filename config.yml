@@ -1,0 +1,13 @@
+databricks:
+  host: ${DATABRICKS_HOST}
+  token: ${DATABRICKS_TOKEN}
+  catalog: statestreet
+  warehouse_id: ${DATABRICKS_WAREHOUSE_ID}
+
+pipeline:
+  volume_path: /Volumes/statestreet/securities_master/raw_files/
+  default_use_case: securities-master
+
+anthropic:
+  model: claude-sonnet-4-6
+  max_tokens: 8192

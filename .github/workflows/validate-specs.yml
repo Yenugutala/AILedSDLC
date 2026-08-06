@@ -1,0 +1,54 @@
+name: Validate Specs
+
+on:
+  pull_request:
+    paths:
+      - 'use-cases/**/specs/**'
+      - 'agents/prompts/**'
+      - 'CLAUDE.md'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e . pyyaml
+
+      - name: Validate spec files (securities-master)
+        run: sml validate --use-case securities-master
+
+      - name: Validate all use cases
+        run: |
+          for dir in use-cases/*/; do
+            use_case=$(basename "$dir")
+            if [ -f "use-cases/$use_case/request.yaml" ]; then
+              echo "Validating: $use_case"
+              sml validate --use-case "$use_case"
+            fi
+          done
+
+      - name: Check YAML syntax for all spec files
+        run: |
+          python3 -c "
+          import yaml, glob, sys
+          errors = []
+          for f in glob.glob('use-cases/**/specs/**/*.yaml', recursive=True):
+              try:
+                  yaml.safe_load(open(f))
+                  print(f'  ✓ {f}')
+              except yaml.YAMLError as e:
+                  errors.append(f'{f}: {e}')
+                  print(f'  ✗ {f}: {e}')
+          if errors:
+              print(f'\n{len(errors)} YAML syntax error(s)')
+              sys.exit(1)
+          else:
+              print(f'\nAll YAML files valid')
+          "

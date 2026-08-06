@@ -1,0 +1,27 @@
+# Agent runtime state — stored per use-case, never committed
+# Location: project/use-cases/<name>/agent_state.yaml
+use-cases/**/agent_state.yaml
+
+# Generated code (appears only as PR diff, not directly committed)
+use-cases/**/generated/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+
+# Secrets
+.env.local
+*.pat
+databricks_token.txt
+.databrickscfg
+
+# OS
+.DS_Store
+Thumbs.db

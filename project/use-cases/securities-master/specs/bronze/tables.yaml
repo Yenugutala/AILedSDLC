@@ -1,0 +1,575 @@
+layer: bronze
+catalog: statestreet
+schema: b_statestreet
+volume_path: /Volumes/statestreet/securities_master/raw_files/
+iceberg_uniform: true
+
+tables:
+
+  # ─────────────────────────────────────────────
+  # CORE BASE TABLE
+  # ─────────────────────────────────────────────
+
+  - name: product
+    description: "Base table for all securities. Every security has exactly one row here regardless of subtype."
+    source_file: product.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,              type: STRING,        nullable: false, description: "Unique security identifier (PK)"}
+      - {name: id_type,                 type: STRING,        nullable: true,  description: "Primary identifier type: CUSIP, ISIN, SEDOL, TICKER, BLOOMBERG_ID"}
+      - {name: type,                    type: STRING,        nullable: false, description: "Product category: EQUITY, DEBT, FUND, DERIVATIVE, RIGHT"}
+      - {name: sub_type,                type: STRING,        nullable: true,  description: "Subcategory: COMMON_STOCK, PREFERRED_STOCK, BOND, MUNI, POOL_BACKED, OPTION, FUTURE, FUND, RIGHT"}
+      - {name: status,                  type: STRING,        nullable: false, description: "Lifecycle: ACTIVE, INACTIVE, MATURED, SUSPENDED, DELISTED"}
+      - {name: settlement_type,         type: STRING,        nullable: true,  description: "Settlement method: T+1, T+2, T+3, CASH"}
+      - {name: description,             type: STRING,        nullable: true,  description: "Human-readable security name"}
+      - {name: issue_date,              type: DATE,          nullable: true,  description: "Date the security was issued"}
+      - {name: issue_price,             type: DECIMAL(18,6), nullable: true,  description: "Price at issuance"}
+      - {name: current_face_value,      type: DECIMAL(18,6), nullable: true,  description: "Current face/par value"}
+      - {name: issuer_legal_entity_id,  type: STRING,        nullable: true,  description: "FK to legal_entity.legal_entity_id"}
+      - {name: tick_ladder_scale_id,    type: STRING,        nullable: true,  description: "FK to tick_ladder_scale.tick_ladder_scale_id"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  # ─────────────────────────────────────────────
+  # LEGACY / SHADOW TABLE
+  # ─────────────────────────────────────────────
+
+  - name: generic_product
+    description: "Deprecated legacy shadow of product. One product can have many generic_product rows. No uniqueness constraint on product_id."
+    source_file: generic_product.csv
+    primary_key: [generic_product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    dq_notes: "Uniqueness DQ rule intentionally NOT applied to product_id. See USE-CASE-003 in known_issues.md."
+    columns:
+      - {name: generic_product_id,              type: STRING,  nullable: false, description: "Row identifier (surrogate — not a true unique PK by design)"}
+      - {name: product_id,                      type: STRING,  nullable: true,  description: "FK to product.product_id (1:many relationship)"}
+      - {name: description,                     type: STRING,  nullable: true,  description: "Legacy product description"}
+      - {name: status,                          type: STRING,  nullable: true,  description: "Legacy status field"}
+      - {name: gs_legacy_prime_issue_currency,  type: STRING,  nullable: true,  description: "Legacy currency code — FK to currency.currency_code (used in RULE0095)"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  # ─────────────────────────────────────────────
+  # LEGAL ENTITY (SCD2 CANDIDATE)
+  # ─────────────────────────────────────────────
+
+  - name: legal_entity
+    description: "Issuers and counterparties. Bitemporal — SCD2 applied in Silver."
+    source_file: legal_entity.csv
+    primary_key: [legal_entity_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: legal_entity_id,   type: STRING,  nullable: false, description: "Unique entity identifier (PK)"}
+      - {name: legal_name,        type: STRING,  nullable: false, description: "Legal entity name (used by RULE0031)"}
+      - {name: country,           type: STRING,  nullable: true,  description: "ISO 3166-1 alpha-2 country code"}
+      - {name: entity_type,       type: STRING,  nullable: true,  description: "BANK, CORPORATE, GOVERNMENT, etc."}
+      - {name: legal_structure,   type: STRING,  nullable: true,  description: "CORP, LLC, LP, TRUST, GOVERNMENT (validated by RULE0005)"}
+      - {name: formation_date,    type: DATE,    nullable: true,  description: "Date legal entity was formed (validated not-in-future by RULE0087)"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  # ─────────────────────────────────────────────
+  # TICK LADDER REFERENCE TABLES
+  # ─────────────────────────────────────────────
+
+  - name: tick_ladder_scale
+    description: "Minimum price increment scale definitions."
+    source_file: tick_ladder_scale.csv
+    primary_key: [tick_ladder_scale_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: tick_ladder_scale_id,  type: STRING,        nullable: false, description: "Unique scale identifier (PK)"}
+      - {name: description,           type: STRING,        nullable: true,  description: "Scale description"}
+      - {name: tick_size,             type: DECIMAL(18,8), nullable: true,  description: "Default tick size for scale (validated strictly positive by RULE0082)"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: tick
+    description: "Individual tick entries within a tick_ladder_scale."
+    source_file: tick.csv
+    primary_key: [tick_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: tick_id,               type: STRING,        nullable: false, description: "Unique tick identifier (PK)"}
+      - {name: tick_ladder_scale_id,  type: STRING,        nullable: true,  description: "FK to tick_ladder_scale.tick_ladder_scale_id"}
+      - {name: price_from,            type: DECIMAL(18,6), nullable: true,  description: "Lower bound of price range"}
+      - {name: price_to,              type: DECIMAL(18,6), nullable: true,  description: "Upper bound of price range"}
+      - {name: tick_size,             type: DECIMAL(18,8), nullable: true,  description: "Minimum price increment for this range (validated strictly positive by RULE0081)"}
+      - {name: price_range,           type: STRING,        nullable: true,  description: "Price tier: TIER1, TIER2, TIER3 (validated by RULE0020)"}
+      - {name: tick_currency_code,    type: STRING,        nullable: true,  description: "FK to currency.currency_code (validated by RULE0117)"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  # ─────────────────────────────────────────────
+  # PRODUCT RATING (SCD2 CANDIDATE)
+  # ─────────────────────────────────────────────
+
+  - name: product_rating
+    description: "Credit rating history for securities. SCD2 applied in Silver."
+    source_file: product_rating.csv
+    primary_key: [product_rating_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_rating_id,       type: STRING,  nullable: false, description: "Unique rating record identifier (PK — used by RULE0052)"}
+      - {name: product_id,              type: STRING,  nullable: false, description: "FK to product.product_id"}
+      - {name: product_rating_type_id,  type: STRING,  nullable: true,  description: "FK to product_rating_type.product_rating_type_id (used by RULE0099)"}
+      - {name: rating_value,            type: STRING,  nullable: false, description: "Rating code: AAA, BBB-, etc."}
+      - {name: rating_agency,           type: STRING,  nullable: false, description: "MOODYS, SP, FITCH, DBRS (validated by RULE0021)"}
+      - {name: watch_code,              type: STRING,  nullable: true,  description: "POSITIVE, NEGATIVE, STABLE, DEVELOPING, NONE (validated by RULE0022)"}
+      - {name: effective_from_date,     type: DATE,    nullable: false, description: "Date rating was assigned — used for SCD2 partitioning and RULE0088"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: product_rating_type
+    description: "Reference table for rating type definitions and agencies."
+    source_file: product_rating_type.csv
+    primary_key: [product_rating_type_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_rating_type_id,  type: STRING,  nullable: false, description: "Unique rating type identifier (PK — used by RULE0046 and RULE0099)"}
+      - {name: rating_agency,           type: STRING,  nullable: true,  description: "SP, Moodys, Fitch"}
+      - {name: rating_scale,            type: STRING,  nullable: true,  description: "Short-term or long-term scale"}
+      - {name: rating_type_code,        type: STRING,  nullable: true,  description: "ISSUER, ISSUE, SHORT_TERM, LONG_TERM (validated by RULE0023)"}
+      - {name: description,             type: STRING,  nullable: true,  description: "Rating type description"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  # ─────────────────────────────────────────────
+  # CLASSIFICATION & IDENTIFIERS (RELATIONSHIP TABLES)
+  # ─────────────────────────────────────────────
+
+  - name: classification
+    description: "Product classification tags. Zero or more classifications per product."
+    source_file: classification.csv
+    primary_key: [classification_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: classification_id,     type: STRING,  nullable: false, description: "Unique classification record identifier (PK)"}
+      - {name: product_id,            type: STRING,  nullable: false, description: "FK to product.product_id"}
+      - {name: classification_type,   type: STRING,  nullable: true,  description: "Classification scheme name"}
+      - {name: classification_value,  type: STRING,  nullable: true,  description: "Classification code or value"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: identifiers
+    description: "Alternate identifiers for a product (CUSIP, ISIN, SEDOL, TICKER, BLOOMBERG_ID)."
+    source_file: identifiers.csv
+    primary_key: [identifiers_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: identifiers_id,     type: STRING,  nullable: false, description: "Unique identifier record (PK — used by RULE0051)"}
+      - {name: product_id,         type: STRING,  nullable: false, description: "FK to product.product_id"}
+      - {name: id_type,            type: STRING,  nullable: false, description: "CUSIP, ISIN, SEDOL, TICKER, BLOOMBERG_ID"}
+      - {name: identifier_value,   type: STRING,  nullable: false, description: "The actual identifier string (licensed data)"}
+      - {name: cusip,              type: STRING,  nullable: true,  description: "CUSIP value — 9 alphanumeric chars (validated by RULE0069)"}
+      - {name: isin,               type: STRING,  nullable: true,  description: "ISIN value — 2-letter country code + 10 chars (validated by RULE0070)"}
+      - {name: sedol,              type: STRING,  nullable: true,  description: "SEDOL value — 7 alphanumeric chars (validated by RULE0071)"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  # ─────────────────────────────────────────────
+  # PRODUCT SUBTYPE TABLES — FUND & RIGHT
+  # ─────────────────────────────────────────────
+
+  - name: fund
+    description: "Fund-specific attributes. Extends product for FUND type securities."
+    source_file: fund.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,              type: STRING,  nullable: false, description: "FK to product.product_id (PK of this table)"}
+      - {name: endness_type,            type: STRING,  nullable: true,  description: "OPEN_END or CLOSED_END (validated by RULE0006)"}
+      - {name: mutual_fund_type,        type: STRING,  nullable: true,  description: "EQUITY, FIXED_INCOME, BALANCED, MONEY_MARKET, ALTERNATIVE (validated by RULE0008)"}
+      - {name: mutual_fund_load_type,   type: STRING,  nullable: true,  description: "FRONT_LOAD, BACK_LOAD, NO_LOAD, LEVEL_LOAD (validated by RULE0007)"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: right
+    description: "Subscription right-specific attributes. Extends product for RIGHT type securities."
+    source_file: right.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,        nullable: false, description: "FK to product.product_id (PK of this table)"}
+      - {name: exercise_style,         type: STRING,        nullable: true,  description: "AMERICAN, EUROPEAN, BERMUDAN (validated by RULE0009)"}
+      - {name: option_type,            type: STRING,        nullable: true,  description: "CALL or PUT (validated by RULE0010)"}
+      - {name: strike_price,           type: DECIMAL(18,6), nullable: true,  description: "Price at which the right can be exercised (validated non-negative by RULE0078)"}
+      - {name: exercise_start_date,    type: DATE,          nullable: true,  description: "Start of exercise window"}
+      - {name: exercise_end_date,      type: DATE,          nullable: true,  description: "End of exercise window"}
+      - {name: underlying_product_id,  type: STRING,        nullable: true,  description: "FK to product.product_id for the underlying security"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  # ─────────────────────────────────────────────
+  # PRODUCT SUBTYPE TABLES — DEBT HIERARCHY
+  # ─────────────────────────────────────────────
+
+  - name: debt
+    description: "Debt-specific attributes. Base for Bond, Muni, and PoolBackedSecurity."
+    source_file: debt.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,              type: STRING,        nullable: false, description: "FK to product.product_id (PK of this table)"}
+      - {name: face_amount,             type: DECIMAL(18,6), nullable: true,  description: "Total face/par amount of the debt instrument"}
+      - {name: total_amount_issued,     type: DECIMAL(18,6), nullable: true,  description: "Total amount issued — validated non-negative by RULE0076"}
+      - {name: par_value,               type: DECIMAL(18,6), nullable: true,  description: "Par value — validated non-negative by RULE0077"}
+      - {name: issue_date_settlement,   type: DATE,          nullable: true,  description: "Settlement date at issuance"}
+      - {name: face_currency_code,      type: STRING,        nullable: true,  description: "ISO 4217 currency code for face value — FK to currency.currency_code"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: bond
+    description: "Bond-specific attributes. Extends debt. Includes coupon and maturity details."
+    source_file: bond.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,              type: STRING,  nullable: false, description: "FK to debt.product_id (also FK to product.product_id via debt)"}
+      - {name: coupon_type,             type: STRING,  nullable: false, description: "FIXED, FLOATING, ZERO"}
+      - {name: maturity_date,           type: DATE,    nullable: false, description: "When the bond matures"}
+      - {name: face_currency_code,      type: STRING,  nullable: false, description: "ISO 4217 currency code for face value — FK to currency.currency_code"}
+      - {name: issue_currency_code,     type: STRING,  nullable: true,  description: "Currency of issuance — FK to currency.currency_code (validated by RULE0106)"}
+      - {name: day_count_convention,    type: STRING,  nullable: true,  description: "ACT/360, 30/360, ACT/ACT, etc."}
+      - {name: reference_index_rate,    type: STRING,  nullable: true,  description: "CPI, LIBOR, SOFR, RPI — validated by RULE0015"}
+      - {name: conversion_rule,         type: STRING,  nullable: true,  description: "MANDATORY, OPTIONAL, CONTINGENT, NONE — validated by RULE0016"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: muni
+    description: "Municipal bond attributes. Extends bond."
+    source_file: muni.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,    type: STRING,   nullable: false, description: "FK to bond.product_id"}
+      - {name: tax_exempt,    type: BOOLEAN,  nullable: true,  description: "Whether interest is tax-exempt"}
+      - {name: state,         type: STRING,   nullable: true,  description: "US state of issuance (2-letter code)"}
+      - {name: purpose,       type: STRING,   nullable: true,  description: "Municipal use of proceeds"}
+      - {name: pledge_type,   type: STRING,   nullable: true,  description: "GENERAL_OBLIGATION, REVENUE, DOUBLE_BARRELED — validated by RULE0017"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: pool_backed_security
+    description: "Pool-backed security attributes. Extends debt (NOT bond — see USE-CASE-005)."
+    source_file: pool_backed_security.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,  type: STRING,  nullable: false, description: "FK to debt.product_id — joins debt not bond (USE-CASE-005)"}
+      - {name: pool_type,   type: STRING,  nullable: true,  description: "Type of underlying asset pool"}
+      - {name: originator,  type: STRING,  nullable: true,  description: "Entity that originated the pool"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  # ─────────────────────────────────────────────
+  # PRODUCT SUBTYPE TABLES — EQUITY HIERARCHY
+  # ─────────────────────────────────────────────
+
+  - name: series
+    description: "Optional grouping series for Stock and ListedDerivative."
+    source_file: series.csv
+    primary_key: [series_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: series_id,    type: STRING,  nullable: false, description: "Unique series identifier (PK)"}
+      - {name: description,  type: STRING,  nullable: true,  description: "Series description"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: stock
+    description: "Stock-specific attributes. Base for CommonStock and PreferredStock."
+    source_file: stock.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,        type: STRING,  nullable: false, description: "FK to product.product_id (PK of this table)"}
+      - {name: series_id,         type: STRING,  nullable: true,  description: "FK to series.series_id"}
+      - {name: depository_type,   type: STRING,  nullable: true,  description: "DTC, EUROCLEAR, CLEARSTREAM, PHYSICAL — validated by RULE0018"}
+      - {name: has_voting_rights, type: STRING,  nullable: true,  description: "Voting rights indicator — validated not-null by RULE0034"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: common_stock
+    description: "Common stock attributes. Extends stock."
+    source_file: common_stock.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,     type: STRING,   nullable: false, description: "FK to stock.product_id"}
+      - {name: voting_rights,  type: BOOLEAN,  nullable: true,  description: "Whether stock carries voting rights"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: preferred_stock
+    description: "Preferred stock attributes. Extends stock."
+    source_file: preferred_stock.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,      type: STRING,        nullable: false, description: "FK to stock.product_id"}
+      - {name: dividend_type,   type: STRING,        nullable: true,  description: "CUMULATIVE or NON_CUMULATIVE"}
+      - {name: dividend_right,  type: STRING,        nullable: true,  description: "CUMULATIVE, NON_CUMULATIVE, PARTICIPATING — validated by RULE0019"}
+      - {name: par_value,       type: DECIMAL(18,6), nullable: true,  description: "Par value — validated non-negative by RULE0080"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  # ─────────────────────────────────────────────
+  # PRODUCT SUBTYPE TABLES — DERIVATIVE HIERARCHY
+  # ─────────────────────────────────────────────
+
+  - name: listed_derivative
+    description: "Listed derivative attributes. Base for Option and Future."
+    source_file: listed_derivative.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,   nullable: false, description: "FK to product.product_id (PK of this table)"}
+      - {name: series_id,              type: STRING,   nullable: true,  description: "FK to series.series_id"}
+      - {name: underlying_product_id,  type: STRING,   nullable: true,  description: "FK to product.product_id for the underlying security"}
+      - {name: contract_month,         type: INTEGER,  nullable: true,  description: "Calendar month of contract (1-12) — validated by RULE0084"}
+      - {name: last_trade_date,        type: DATE,     nullable: true,  description: "Last trading date — validated not-in-future (RULE0089) and after issue_date (RULE0091)"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: option
+    description: "Option-specific attributes. Extends listed_derivative."
+    source_file: option.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,            type: STRING,        nullable: false, description: "FK to listed_derivative.product_id"}
+      - {name: option_type,           type: STRING,        nullable: false, description: "CALL or PUT (validated by RULE0011)"}
+      - {name: exercise_style,        type: STRING,        nullable: false, description: "AMERICAN, EUROPEAN, BERMUDAN (validated by RULE0012, completeness by RULE0037)"}
+      - {name: margin_style,          type: STRING,        nullable: true,  description: "PREMIUM or FUTURES_STYLE (validated by RULE0013)"}
+      - {name: strike_price,          type: DECIMAL(18,6), nullable: true,  description: "Strike/exercise price (validated non-negative by RULE0079)"}
+      - {name: strike_currency_code,  type: STRING,        nullable: true,  description: "FK to currency.currency_code (validated by RULE0114)"}
+      - {name: expiry_date,           type: DATE,          nullable: true,  description: "Expiration date"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: future
+    description: "Futures contract attributes. Extends listed_derivative."
+    source_file: future.csv
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,                    type: STRING,    nullable: false, description: "FK to listed_derivative.product_id"}
+      - {name: delivery_date,                 type: DATE,      nullable: true,  description: "Futures delivery/expiry date"}
+      - {name: valuation_method,              type: STRING,    nullable: true,  description: "MARK_TO_MARKET, CASH_SETTLED, PHYSICAL_DELIVERY"}
+      - {name: first_delivery_datetime_utc,   type: TIMESTAMP, nullable: true,  description: "First allowable delivery datetime (UTC)"}
+      - {name: last_delivery_datetime_utc,    type: TIMESTAMP, nullable: true,  description: "Last allowable delivery datetime (UTC)"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: coupon
+    description: "Coupon payment schedule for bond securities. Grain: one row per coupon_id."
+    source_file: coupon.csv
+    primary_key: [coupon_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: coupon_id,      type: STRING,        nullable: false, description: "Unique coupon record identifier (PK)"}
+      - {name: product_id,     type: STRING,        nullable: false, description: "FK to bond.product_id"}
+      - {name: coupon_rate,    type: DECIMAL(10,6), nullable: true,  description: "Coupon rate as a decimal"}
+      - {name: payment_date,   type: DATE,          nullable: false, description: "Scheduled coupon payment date"}
+      - {name: coupon_type,    type: STRING,        nullable: true,  description: "FIXED, FLOATING, ZERO"}
+      - {name: frequency,      type: STRING,        nullable: true,  description: "ANNUAL, SEMI_ANNUAL, QUARTERLY, MONTHLY"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: currency
+    description: "ISO 4217 currency reference. Contains 2 intentionally bad rows for DQ testing (USE-CASE-002)."
+    source_file: currency.csv
+    primary_key: [currency_code]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: currency_code,  type: STRING,  nullable: false, description: "ISO 4217 3-letter currency code (PK)"}
+      - {name: currency_name,  type: STRING,  nullable: true,  description: "Full currency name"}
+      - {name: numeric_code,   type: STRING,  nullable: true,  description: "ISO 4217 numeric code"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: principal_redemption_provision
+    description: "Principal redemption provision definitions for debt instruments."
+    source_file: principal_redemption_provision.csv
+    primary_key: [provision_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: provision_id,    type: STRING,  nullable: false, description: "Unique provision identifier (PK)"}
+      - {name: provision_type,  type: STRING,  nullable: true,  description: "CALLABLE, PUTTABLE, SINKING_FUND, CONVERTIBLE"}
+      - {name: description,     type: STRING,  nullable: true,  description: "Human-readable description"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: listed_derivative_tick
+    description: "Bridge table M:M between listed_derivative and tick."
+    source_file: listed_derivative_tick.csv
+    primary_key: [product_id, tick_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,  type: STRING,  nullable: false, description: "FK to listed_derivative.product_id"}
+      - {name: tick_id,     type: STRING,  nullable: false, description: "FK to tick.tick_id"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: debt_principal_redemption_provision
+    description: "Bridge table M:M between debt and principal_redemption_provision."
+    source_file: debt_principal_redemption_provision.csv
+    primary_key: [product_id, provision_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,    type: STRING,  nullable: false, description: "FK to debt.product_id"}
+      - {name: provision_id,  type: STRING,  nullable: false, description: "FK to principal_redemption_provision.provision_id"}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: dq_rules_catalog
+    description: "DQ rule catalog metadata. Bronze landing only — no DQ rules applied (USE-CASE-001)."
+    source_file: dq_rules_catalog.csv
+    primary_key: [rule_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    bronze_only: true
+    columns:
+      - {name: rule_id,         type: STRING,  nullable: false}
+      - {name: table_name,      type: STRING,  nullable: true}
+      - {name: column_name,     type: STRING,  nullable: true}
+      - {name: dq_dimension,    type: STRING,  nullable: true}
+      - {name: rule_type,       type: STRING,  nullable: true}
+      - {name: severity,        type: STRING,  nullable: true}
+      - {name: description,     type: STRING,  nullable: true}
+      - {name: rule_logic_sql,  type: STRING,  nullable: true}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}
+
+  - name: dq_issues_catalog
+    description: "Known DQ issues catalog. Bronze landing only — no DQ rules applied (USE-CASE-001)."
+    source_file: dq_issues_catalog.csv
+    primary_key: [issue_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    bronze_only: true
+    columns:
+      - {name: issue_id,     type: STRING,  nullable: false}
+      - {name: rule_id,      type: STRING,  nullable: true}
+      - {name: table_name,   type: STRING,  nullable: true}
+      - {name: description,  type: STRING,  nullable: true}
+      - {name: status,       type: STRING,  nullable: true}
+      - {name: workaround,   type: STRING,  nullable: true}
+    metadata_columns:
+      - {name: _source_file,   type: STRING}
+      - {name: _ingestion_ts,  type: TIMESTAMP}
+      - {name: _batch_id,      type: STRING}
+      - {name: _row_hash,      type: STRING}

@@ -1,0 +1,1170 @@
+layer: silver
+dq_rule_version: auto
+rules:
+- rule_id: RULE0001
+  table: product
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: product.id_type must be one of ['CUSIP', 'ISIN', 'SEDOL', 'TICKER', 'BLOOMBERG_ID'].
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE id_type IS NOT NULL AND id_type NOT IN ('CUSIP', 'ISIN', 'SEDOL',
+    'TICKER', 'BLOOMBERG_ID');
+  column: id_type
+  related_dq_issue_ids: DQ00022
+- rule_id: RULE0002
+  table: product
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: product.type must be one of ['DEBT', 'EQUITY', 'FUND', 'DERIVATIVE', 'RIGHT'].
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE type IS NOT NULL AND type NOT IN ('DEBT', 'EQUITY', 'FUND', 'DERIVATIVE',
+    'RIGHT');
+  column: type
+- rule_id: RULE0003
+  table: product
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: product.status must be one of ['ACTIVE', 'INACTIVE', 'MATURED', 'SUSPENDED', 'DELISTED'].
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE status IS NOT NULL AND status NOT IN ('ACTIVE', 'INACTIVE', 'MATURED',
+    'SUSPENDED', 'DELISTED');
+  column: status
+  related_dq_issue_ids: DQ00023
+- rule_id: RULE0004
+  table: product
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: product.settlement_type must be one of ['T+1', 'T+2', 'T+3', 'CASH'].
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE settlement_type IS NOT NULL AND settlement_type NOT IN ('T+1',
+    'T+2', 'T+3', 'CASH');
+  column: settlement_type
+  related_dq_issue_ids: DQ00024
+- rule_id: RULE0005
+  table: legal_entity
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: legal_entity.legal_structure must be one of ['CORP', 'LLC', 'LP', 'TRUST', 'GOVERNMENT'].
+  sql: SELECT * FROM statestreet.b_statestreet.legal_entity WHERE legal_structure IS NOT NULL AND legal_structure NOT IN ('CORP',
+    'LLC', 'LP', 'TRUST', 'GOVERNMENT');
+  column: legal_structure
+  related_dq_issue_ids: DQ00005
+- rule_id: RULE0006
+  table: fund
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: fund.endness_type must be one of ['OPEN_END', 'CLOSED_END'].
+  sql: SELECT * FROM statestreet.b_statestreet.fund WHERE endness_type IS NOT NULL AND endness_type NOT IN ('OPEN_END', 'CLOSED_END');
+  column: endness_type
+  related_dq_issue_ids: DQ00015
+- rule_id: RULE0007
+  table: fund
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: fund.mutual_fund_load_type must be one of ['FRONT_LOAD', 'BACK_LOAD', 'NO_LOAD', 'LEVEL_LOAD'].
+  sql: SELECT * FROM statestreet.b_statestreet.fund WHERE mutual_fund_load_type IS NOT NULL AND mutual_fund_load_type NOT
+    IN ('FRONT_LOAD', 'BACK_LOAD', 'NO_LOAD', 'LEVEL_LOAD');
+  column: mutual_fund_load_type
+- rule_id: RULE0008
+  table: fund
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: fund.mutual_fund_type must be one of ['EQUITY', 'FIXED_INCOME', 'BALANCED', 'MONEY_MARKET', 'ALTERNATIVE'].
+  sql: SELECT * FROM statestreet.b_statestreet.fund WHERE mutual_fund_type IS NOT NULL AND mutual_fund_type NOT IN ('EQUITY',
+    'FIXED_INCOME', 'BALANCED', 'MONEY_MARKET', 'ALTERNATIVE');
+  column: mutual_fund_type
+- rule_id: RULE0009
+  table: right
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: right.exercise_style must be one of ['AMERICAN', 'EUROPEAN', 'BERMUDAN'].
+  sql: SELECT * FROM statestreet.b_statestreet.right WHERE exercise_style IS NOT NULL AND exercise_style NOT IN ('AMERICAN',
+    'EUROPEAN', 'BERMUDAN');
+  column: exercise_style
+- rule_id: RULE0010
+  table: right
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: right.option_type must be one of ['CALL', 'PUT'].
+  sql: SELECT * FROM statestreet.b_statestreet.right WHERE option_type IS NOT NULL AND option_type NOT IN ('CALL', 'PUT');
+  column: option_type
+- rule_id: RULE0011
+  table: option
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: option.option_type must be one of ['CALL', 'PUT'].
+  sql: SELECT * FROM statestreet.b_statestreet.option WHERE option_type IS NOT NULL AND option_type NOT IN ('CALL', 'PUT');
+  column: option_type
+- rule_id: RULE0012
+  table: option
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: option.exercise_style must be one of ['AMERICAN', 'EUROPEAN', 'BERMUDAN'].
+  sql: SELECT * FROM statestreet.b_statestreet.option WHERE exercise_style IS NOT NULL AND exercise_style NOT IN ('AMERICAN',
+    'EUROPEAN', 'BERMUDAN');
+  column: exercise_style
+  related_dq_issue_ids: DQ00019
+- rule_id: RULE0013
+  table: option
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: option.margin_style must be one of ['PREMIUM', 'FUTURES_STYLE'].
+  sql: SELECT * FROM statestreet.b_statestreet.option WHERE margin_style IS NOT NULL AND margin_style NOT IN ('PREMIUM', 'FUTURES_STYLE');
+  column: margin_style
+- rule_id: RULE0014
+  table: future
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: future.valuation_method must be one of ['MARK_TO_MARKET', 'CASH_SETTLED', 'PHYSICAL_DELIVERY'].
+  sql: SELECT * FROM statestreet.b_statestreet.future WHERE valuation_method IS NOT NULL AND valuation_method NOT IN ('MARK_TO_MARKET',
+    'CASH_SETTLED', 'PHYSICAL_DELIVERY');
+  column: valuation_method
+- rule_id: RULE0015
+  table: bond
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: bond.reference_index_rate must be one of ['CPI', 'LIBOR', 'SOFR', 'RPI'].
+  sql: SELECT * FROM statestreet.b_statestreet.bond WHERE reference_index_rate IS NOT NULL AND reference_index_rate NOT IN
+    ('CPI', 'LIBOR', 'SOFR', 'RPI');
+  column: reference_index_rate
+- rule_id: RULE0016
+  table: bond
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: bond.conversion_rule must be one of ['MANDATORY', 'OPTIONAL', 'CONTINGENT', 'NONE'].
+  sql: SELECT * FROM statestreet.b_statestreet.bond WHERE conversion_rule IS NOT NULL AND conversion_rule NOT IN ('MANDATORY',
+    'OPTIONAL', 'CONTINGENT', 'NONE');
+  column: conversion_rule
+- rule_id: RULE0017
+  table: muni
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: muni.pledge_type must be one of ['GENERAL_OBLIGATION', 'REVENUE', 'DOUBLE_BARRELED'].
+  sql: SELECT * FROM statestreet.b_statestreet.muni WHERE pledge_type IS NOT NULL AND pledge_type NOT IN ('GENERAL_OBLIGATION',
+    'REVENUE', 'DOUBLE_BARRELED');
+  column: pledge_type
+- rule_id: RULE0018
+  table: stock
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: stock.depository_type must be one of ['DTC', 'EUROCLEAR', 'CLEARSTREAM', 'PHYSICAL'].
+  sql: SELECT * FROM statestreet.b_statestreet.stock WHERE depository_type IS NOT NULL AND depository_type NOT IN ('DTC',
+    'EUROCLEAR', 'CLEARSTREAM', 'PHYSICAL');
+  column: depository_type
+- rule_id: RULE0019
+  table: preferred_stock
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: preferred_stock.dividend_right must be one of ['CUMULATIVE', 'NON_CUMULATIVE', 'PARTICIPATING'].
+  sql: SELECT * FROM statestreet.b_statestreet.preferred_stock WHERE dividend_right IS NOT NULL AND dividend_right NOT IN
+    ('CUMULATIVE', 'NON_CUMULATIVE', 'PARTICIPATING');
+  column: dividend_right
+- rule_id: RULE0020
+  table: tick
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: tick.price_range must be one of ['TIER1', 'TIER2', 'TIER3'].
+  sql: SELECT * FROM statestreet.b_statestreet.tick WHERE price_range IS NOT NULL AND price_range NOT IN ('TIER1', 'TIER2',
+    'TIER3');
+  column: price_range
+- rule_id: RULE0021
+  table: product_rating
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: product_rating.rating_agency must be one of ['MOODYS', 'SP', 'FITCH', 'DBRS'].
+  sql: SELECT * FROM statestreet.b_statestreet.product_rating WHERE rating_agency IS NOT NULL AND rating_agency NOT IN ('MOODYS',
+    'SP', 'FITCH', 'DBRS');
+  column: rating_agency
+  related_dq_issue_ids: DQ00037
+- rule_id: RULE0022
+  table: product_rating
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: product_rating.watch_code must be one of ['POSITIVE', 'NEGATIVE', 'STABLE', 'DEVELOPING', 'NONE'].
+  sql: SELECT * FROM statestreet.b_statestreet.product_rating WHERE watch_code IS NOT NULL AND watch_code NOT IN ('POSITIVE',
+    'NEGATIVE', 'STABLE', 'DEVELOPING', 'NONE');
+  column: watch_code
+- rule_id: RULE0023
+  table: product_rating_type
+  dq_dimension: Validity
+  rule_type: ENUM_MEMBERSHIP
+  severity: HIGH
+  description: product_rating_type.rating_type_code must be one of ['ISSUER', 'ISSUE', 'SHORT_TERM', 'LONG_TERM'].
+  sql: SELECT * FROM statestreet.b_statestreet.product_rating_type WHERE rating_type_code IS NOT NULL AND rating_type_code
+    NOT IN ('ISSUER', 'ISSUE', 'SHORT_TERM', 'LONG_TERM');
+  column: rating_type_code
+- rule_id: RULE0024
+  table: product
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: CRITICAL
+  description: product.product_id must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE product_id IS NULL OR TRIM(CAST(product_id AS STRING)) = '';
+  column: product_id
+  related_dq_issue_ids: DQ00021
+- rule_id: RULE0025
+  table: product
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: HIGH
+  description: product.id_type must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE id_type IS NULL OR TRIM(CAST(id_type AS STRING)) = '';
+  column: id_type
+  related_dq_issue_ids: DQ00022
+- rule_id: RULE0026
+  table: product
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: HIGH
+  description: product.type must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE type IS NULL OR TRIM(CAST(type AS STRING)) = '';
+  column: type
+- rule_id: RULE0027
+  table: product
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: HIGH
+  description: product.status must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE status IS NULL OR TRIM(CAST(status AS STRING)) = '';
+  column: status
+  related_dq_issue_ids: DQ00023
+- rule_id: RULE0028
+  table: product
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: CRITICAL
+  description: product.issuer_legal_entity_id must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE issuer_legal_entity_id IS NULL OR TRIM(CAST(issuer_legal_entity_id
+    AS STRING)) = '';
+  column: issuer_legal_entity_id
+  related_dq_issue_ids: DQ00027
+- rule_id: RULE0029
+  table: product
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: CRITICAL
+  description: product.tick_ladder_scale_id must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE tick_ladder_scale_id IS NULL OR TRIM(CAST(tick_ladder_scale_id
+    AS STRING)) = '';
+  column: tick_ladder_scale_id
+  related_dq_issue_ids: DQ00028
+- rule_id: RULE0030
+  table: legal_entity
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: CRITICAL
+  description: legal_entity.legal_entity_id must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.legal_entity WHERE legal_entity_id IS NULL OR TRIM(CAST(legal_entity_id AS
+    STRING)) = '';
+  column: legal_entity_id
+- rule_id: RULE0031
+  table: legal_entity
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: HIGH
+  description: legal_entity.legal_name must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.legal_entity WHERE legal_name IS NULL OR TRIM(CAST(legal_name AS STRING)) =
+    '';
+  column: legal_name
+  related_dq_issue_ids: DQ00003
+- rule_id: RULE0032
+  table: currency
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: CRITICAL
+  description: currency.code must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.currency WHERE code IS NULL OR TRIM(CAST(code AS STRING)) = '';
+  column: code
+  related_dq_issue_ids: DQ00001;DQ00002
+- rule_id: RULE0033
+  table: stock
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: CRITICAL
+  description: stock.product_id must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.stock WHERE product_id IS NULL OR TRIM(CAST(product_id AS STRING)) = '';
+  column: product_id
+- rule_id: RULE0034
+  table: stock
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: HIGH
+  description: stock.has_voting_rights must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.stock WHERE has_voting_rights IS NULL OR TRIM(CAST(has_voting_rights AS STRING))
+    = '';
+  column: has_voting_rights
+  related_dq_issue_ids: DQ00009
+- rule_id: RULE0035
+  table: debt
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: CRITICAL
+  description: debt.product_id must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.debt WHERE product_id IS NULL OR TRIM(CAST(product_id AS STRING)) = '';
+  column: product_id
+- rule_id: RULE0036
+  table: option
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: CRITICAL
+  description: option.product_id must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.option WHERE product_id IS NULL OR TRIM(CAST(product_id AS STRING)) = '';
+  column: product_id
+- rule_id: RULE0037
+  table: option
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: HIGH
+  description: option.exercise_style must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.option WHERE exercise_style IS NULL OR TRIM(CAST(exercise_style AS STRING))
+    = '';
+  column: exercise_style
+  related_dq_issue_ids: DQ00019
+- rule_id: RULE0038
+  table: identifiers
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: CRITICAL
+  description: identifiers.product_id must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.identifiers WHERE product_id IS NULL OR TRIM(CAST(product_id AS STRING)) =
+    '';
+  column: product_id
+- rule_id: RULE0039
+  table: product_rating
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: CRITICAL
+  description: product_rating.product_id must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.product_rating WHERE product_id IS NULL OR TRIM(CAST(product_id AS STRING))
+    = '';
+  column: product_id
+  related_dq_issue_ids: DQ00039
+- rule_id: RULE0040
+  table: product_rating
+  dq_dimension: Completeness
+  rule_type: NOT_NULL
+  severity: HIGH
+  description: product_rating.rating_agency must not be null or an empty string.
+  sql: SELECT * FROM statestreet.b_statestreet.product_rating WHERE rating_agency IS NULL OR TRIM(CAST(rating_agency AS STRING))
+    = '';
+  column: rating_agency
+  related_dq_issue_ids: DQ00037
+- rule_id: RULE0041
+  table: product
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: product.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.product GROUP BY product_id HAVING COUNT(*) > 1;
+  column: product_id
+  related_dq_issue_ids: DQ00021
+- rule_id: RULE0042
+  table: legal_entity
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: legal_entity.legal_entity_id must be unique (primary key).
+  sql: SELECT legal_entity_id, COUNT(*) c FROM statestreet.b_statestreet.legal_entity GROUP BY legal_entity_id HAVING COUNT(*)
+    > 1;
+  column: legal_entity_id
+- rule_id: RULE0043
+  table: currency
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: currency.code must be unique (primary key).
+  sql: SELECT code, COUNT(*) c FROM statestreet.b_statestreet.currency GROUP BY code HAVING COUNT(*) > 1;
+  column: code
+  related_dq_issue_ids: DQ00001;DQ00002
+- rule_id: RULE0044
+  table: series
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: series.series_id must be unique (primary key).
+  sql: SELECT series_id, COUNT(*) c FROM statestreet.b_statestreet.series GROUP BY series_id HAVING COUNT(*) > 1;
+  column: series_id
+- rule_id: RULE0045
+  table: tick_ladder_scale
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: tick_ladder_scale.tick_ladder_scale_id must be unique (primary key).
+  sql: SELECT tick_ladder_scale_id, COUNT(*) c FROM statestreet.b_statestreet.tick_ladder_scale GROUP BY tick_ladder_scale_id
+    HAVING COUNT(*) > 1;
+  column: tick_ladder_scale_id
+- rule_id: RULE0046
+  table: product_rating_type
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: product_rating_type.product_rating_type_id must be unique (primary key).
+  sql: SELECT product_rating_type_id, COUNT(*) c FROM statestreet.b_statestreet.product_rating_type GROUP BY product_rating_type_id
+    HAVING COUNT(*) > 1;
+  column: product_rating_type_id
+- rule_id: RULE0047
+  table: tick
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: tick.tick_id must be unique (primary key).
+  sql: SELECT tick_id, COUNT(*) c FROM statestreet.b_statestreet.tick GROUP BY tick_id HAVING COUNT(*) > 1;
+  column: tick_id
+- rule_id: RULE0048
+  table: principal_redemption_provision
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: principal_redemption_provision.principal_redemption_provision_id must be unique (primary key).
+  sql: SELECT principal_redemption_provision_id, COUNT(*) c FROM statestreet.b_statestreet.principal_redemption_provision
+    GROUP BY principal_redemption_provision_id HAVING COUNT(*) > 1;
+  column: principal_redemption_provision_id
+- rule_id: RULE0049
+  table: generic_product
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: generic_product.generic_product_id must be unique (primary key).
+  sql: SELECT generic_product_id, COUNT(*) c FROM statestreet.b_statestreet.generic_product GROUP BY generic_product_id HAVING
+    COUNT(*) > 1;
+  column: generic_product_id
+- rule_id: RULE0050
+  table: classification
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: classification.classification_id must be unique (primary key).
+  sql: SELECT classification_id, COUNT(*) c FROM statestreet.b_statestreet.classification GROUP BY classification_id HAVING
+    COUNT(*) > 1;
+  column: classification_id
+- rule_id: RULE0051
+  table: identifiers
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: identifiers.identifiers_id must be unique (primary key).
+  sql: SELECT identifiers_id, COUNT(*) c FROM statestreet.b_statestreet.identifiers GROUP BY identifiers_id HAVING COUNT(*)
+    > 1;
+  column: identifiers_id
+- rule_id: RULE0052
+  table: product_rating
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: product_rating.product_rating_id must be unique (primary key).
+  sql: SELECT product_rating_id, COUNT(*) c FROM statestreet.b_statestreet.product_rating GROUP BY product_rating_id HAVING
+    COUNT(*) > 1;
+  column: product_rating_id
+- rule_id: RULE0053
+  table: coupon
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: coupon.coupon_id must be unique (primary key).
+  sql: SELECT coupon_id, COUNT(*) c FROM statestreet.b_statestreet.coupon GROUP BY coupon_id HAVING COUNT(*) > 1;
+  column: coupon_id
+- rule_id: RULE0054
+  table: stock
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: stock.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.stock GROUP BY product_id HAVING COUNT(*) > 1;
+  column: product_id
+- rule_id: RULE0055
+  table: common_stock
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: common_stock.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.common_stock GROUP BY product_id HAVING COUNT(*) > 1;
+  column: product_id
+  related_dq_issue_ids: DQ00008
+- rule_id: RULE0056
+  table: preferred_stock
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: preferred_stock.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.preferred_stock GROUP BY product_id HAVING COUNT(*) >
+    1;
+  column: product_id
+- rule_id: RULE0057
+  table: debt
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: debt.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.debt GROUP BY product_id HAVING COUNT(*) > 1;
+  column: product_id
+- rule_id: RULE0058
+  table: bond
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: bond.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.bond GROUP BY product_id HAVING COUNT(*) > 1;
+  column: product_id
+- rule_id: RULE0059
+  table: muni
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: muni.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.muni GROUP BY product_id HAVING COUNT(*) > 1;
+  column: product_id
+  related_dq_issue_ids: DQ00012
+- rule_id: RULE0060
+  table: pool_backed_security
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: pool_backed_security.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.pool_backed_security GROUP BY product_id HAVING COUNT(*)
+    > 1;
+  column: product_id
+- rule_id: RULE0061
+  table: fund
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: fund.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.fund GROUP BY product_id HAVING COUNT(*) > 1;
+  column: product_id
+- rule_id: RULE0062
+  table: right
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: right.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.right GROUP BY product_id HAVING COUNT(*) > 1;
+  column: product_id
+- rule_id: RULE0063
+  table: listed_derivative
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: listed_derivative.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.listed_derivative GROUP BY product_id HAVING COUNT(*)
+    > 1;
+  column: product_id
+- rule_id: RULE0064
+  table: option
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: option.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.option GROUP BY product_id HAVING COUNT(*) > 1;
+  column: product_id
+- rule_id: RULE0065
+  table: future
+  dq_dimension: Uniqueness
+  rule_type: PRIMARY_KEY_UNIQUE
+  severity: CRITICAL
+  description: future.product_id must be unique (primary key).
+  sql: SELECT product_id, COUNT(*) c FROM statestreet.b_statestreet.future GROUP BY product_id HAVING COUNT(*) > 1;
+  column: product_id
+- rule_id: RULE0066
+  table: listed_derivative_tick
+  dq_dimension: Uniqueness
+  rule_type: COMPOSITE_KEY_UNIQUE
+  severity: MEDIUM
+  description: The (product_id, tick_id) pair must be unique in the bridge table.
+  sql: SELECT product_id, tick_id, COUNT(*) c FROM statestreet.b_statestreet.listed_derivative_tick GROUP BY product_id, tick_id
+    HAVING COUNT(*) > 1;
+  column: product_id, tick_id
+- rule_id: RULE0067
+  table: debt_principal_redemption_provision
+  dq_dimension: Uniqueness
+  rule_type: COMPOSITE_KEY_UNIQUE
+  severity: MEDIUM
+  description: The (product_id, principal_redemption_provision_id) pair must be unique in the bridge table.
+  sql: SELECT product_id, principal_redemption_provision_id, COUNT(*) c FROM statestreet.b_statestreet.debt_principal_redemption_provision
+    GROUP BY product_id, principal_redemption_provision_id HAVING COUNT(*) > 1;
+  column: product_id, principal_redemption_provision_id
+- rule_id: RULE0068
+  table: identifiers
+  dq_dimension: Uniqueness
+  rule_type: BUSINESS_KEY_UNIQUE
+  severity: MEDIUM
+  description: An ISIN should not be assigned to more than one distinct product_id.
+  sql: SELECT isin, COUNT(DISTINCT product_id) n FROM statestreet.b_statestreet.identifiers WHERE isin IS NOT NULL AND isin
+    <> '' GROUP BY isin HAVING COUNT(DISTINCT product_id) > 1;
+  column: isin
+  related_dq_issue_ids: DQ00033;DQ00035
+- rule_id: RULE0069
+  table: identifiers
+  dq_dimension: Validity
+  rule_type: REGEX_FORMAT
+  severity: HIGH
+  description: cusip must be exactly 9 alphanumeric characters (A-Z, 0-9).
+  sql: SELECT * FROM statestreet.b_statestreet.identifiers WHERE cusip IS NOT NULL AND cusip <> '' AND NOT cusip RLIKE '^[A-Z0-9]{9}$';
+  column: cusip
+  related_dq_issue_ids: DQ00032
+- rule_id: RULE0070
+  table: identifiers
+  dq_dimension: Validity
+  rule_type: REGEX_FORMAT
+  severity: HIGH
+  description: 'isin must follow ISO 6166: 2-letter country code + 9 alphanumeric + 1 numeric check digit (12 chars total).'
+  sql: SELECT * FROM statestreet.b_statestreet.identifiers WHERE isin IS NOT NULL AND isin <> '' AND NOT isin RLIKE '^[A-Z]{2}[A-Z0-9]{9}[0-9]$';
+  column: isin
+  related_dq_issue_ids: DQ00033;DQ00035
+- rule_id: RULE0071
+  table: identifiers
+  dq_dimension: Validity
+  rule_type: REGEX_FORMAT
+  severity: HIGH
+  description: sedol must be exactly 7 alphanumeric characters.
+  sql: SELECT * FROM statestreet.b_statestreet.identifiers WHERE sedol IS NOT NULL AND sedol <> '' AND NOT sedol RLIKE '^[A-Z0-9]{7}$';
+  column: sedol
+  related_dq_issue_ids: DQ00034
+- rule_id: RULE0072
+  table: currency
+  dq_dimension: Validity
+  rule_type: REGEX_FORMAT
+  severity: HIGH
+  description: currency code must be exactly 3 uppercase letters (ISO 4217 style).
+  sql: SELECT * FROM statestreet.b_statestreet.currency WHERE code IS NOT NULL AND NOT code RLIKE '^[A-Z]{3}$';
+  column: code
+  related_dq_issue_ids: DQ00001;DQ00002
+- rule_id: RULE0073
+  table: product
+  dq_dimension: Consistency
+  rule_type: TRIM_WHITESPACE
+  severity: LOW
+  description: description should not contain leading or trailing whitespace.
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE description IS NOT NULL AND description <> TRIM(description);
+  column: description
+  related_dq_issue_ids: DQ00029
+- rule_id: RULE0074
+  table: product
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: product.issue_price issue_price must not be negative.
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE issue_price IS NOT NULL AND NOT (issue_price >= 0);
+  column: issue_price
+  related_dq_issue_ids: DQ00026
+- rule_id: RULE0075
+  table: product
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: product.current_face_value current_face_value must not be negative.
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE current_face_value IS NOT NULL AND NOT (current_face_value >=
+    0);
+  column: current_face_value
+- rule_id: RULE0076
+  table: debt
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: debt.total_amount_issued total_amount_issued must not be negative.
+  sql: SELECT * FROM statestreet.b_statestreet.debt WHERE total_amount_issued IS NOT NULL AND NOT (total_amount_issued >=
+    0);
+  column: total_amount_issued
+  related_dq_issue_ids: DQ00010
+- rule_id: RULE0077
+  table: debt
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: debt.par_value par_value must not be negative.
+  sql: SELECT * FROM statestreet.b_statestreet.debt WHERE par_value IS NOT NULL AND NOT (par_value >= 0);
+  column: par_value
+- rule_id: RULE0078
+  table: right
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: right.strike_price strike_price must not be negative.
+  sql: SELECT * FROM statestreet.b_statestreet.right WHERE strike_price IS NOT NULL AND NOT (strike_price >= 0);
+  column: strike_price
+  related_dq_issue_ids: DQ00016
+- rule_id: RULE0079
+  table: option
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: option.strike_price strike_price must not be negative.
+  sql: SELECT * FROM statestreet.b_statestreet.option WHERE strike_price IS NOT NULL AND NOT (strike_price >= 0);
+  column: strike_price
+- rule_id: RULE0080
+  table: preferred_stock
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: preferred_stock.par_value par_value must not be negative.
+  sql: SELECT * FROM statestreet.b_statestreet.preferred_stock WHERE par_value IS NOT NULL AND NOT (par_value >= 0);
+  column: par_value
+- rule_id: RULE0081
+  table: tick
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: tick.tick_size tick_size must be strictly positive.
+  sql: SELECT * FROM statestreet.b_statestreet.tick WHERE tick_size IS NOT NULL AND NOT (tick_size > 0);
+  column: tick_size
+  related_dq_issue_ids: DQ00006
+- rule_id: RULE0082
+  table: tick_ladder_scale
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: tick_ladder_scale.tick_size tick_size must be strictly positive.
+  sql: SELECT * FROM statestreet.b_statestreet.tick_ladder_scale WHERE tick_size IS NOT NULL AND NOT (tick_size > 0);
+  column: tick_size
+- rule_id: RULE0083
+  table: coupon
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: coupon.coupon_rate coupon_rate should fall within a plausible 0-25% band.
+  sql: SELECT * FROM statestreet.b_statestreet.coupon WHERE coupon_rate IS NOT NULL AND NOT (coupon_rate BETWEEN 0 AND 25);
+  column: coupon_rate
+  related_dq_issue_ids: DQ00013
+- rule_id: RULE0084
+  table: listed_derivative
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: listed_derivative.contract_month contract_month must be a valid calendar month (1-12).
+  sql: SELECT * FROM statestreet.b_statestreet.listed_derivative WHERE contract_month IS NOT NULL AND NOT (contract_month
+    BETWEEN 1 AND 12);
+  column: contract_month
+  related_dq_issue_ids: DQ00017
+- rule_id: RULE0085
+  table: principal_redemption_provision
+  dq_dimension: Validity
+  rule_type: RANGE_CHECK
+  severity: MEDIUM
+  description: principal_redemption_provision.amount_outstanding amount_outstanding must not be negative.
+  sql: SELECT * FROM statestreet.b_statestreet.principal_redemption_provision WHERE amount_outstanding IS NOT NULL AND NOT
+    (amount_outstanding >= 0);
+  column: amount_outstanding
+- rule_id: RULE0086
+  table: product
+  dq_dimension: Timeliness
+  rule_type: NOT_IN_FUTURE
+  severity: MEDIUM
+  description: product.issue_date must not be later than the current processing date.
+  sql: SELECT * FROM statestreet.b_statestreet.product WHERE issue_date IS NOT NULL AND issue_date > CURRENT_DATE();
+  column: issue_date
+  related_dq_issue_ids: DQ00025
+- rule_id: RULE0087
+  table: legal_entity
+  dq_dimension: Timeliness
+  rule_type: NOT_IN_FUTURE
+  severity: MEDIUM
+  description: legal_entity.formation_date must not be later than the current processing date.
+  sql: SELECT * FROM statestreet.b_statestreet.legal_entity WHERE formation_date IS NOT NULL AND formation_date > CURRENT_DATE();
+  column: formation_date
+  related_dq_issue_ids: DQ00004
+- rule_id: RULE0088
+  table: product_rating
+  dq_dimension: Timeliness
+  rule_type: NOT_IN_FUTURE
+  severity: MEDIUM
+  description: product_rating.effective_from_date must not be later than the current processing date.
+  sql: SELECT * FROM statestreet.b_statestreet.product_rating WHERE effective_from_date IS NOT NULL AND effective_from_date
+    > CURRENT_DATE();
+  column: effective_from_date
+  related_dq_issue_ids: DQ00036
+- rule_id: RULE0089
+  table: listed_derivative
+  dq_dimension: Timeliness
+  rule_type: NOT_IN_FUTURE
+  severity: MEDIUM
+  description: listed_derivative.last_trade_date must not be later than the current processing date.
+  sql: SELECT * FROM statestreet.b_statestreet.listed_derivative WHERE last_trade_date IS NOT NULL AND last_trade_date > CURRENT_DATE();
+  column: last_trade_date
+  related_dq_issue_ids: DQ00018
+- rule_id: RULE0090
+  table: future
+  dq_dimension: Consistency
+  rule_type: CROSS_FIELD_LOGIC
+  severity: MEDIUM
+  description: first_delivery_datetime_utc must not be later than last_delivery_datetime_utc.
+  sql: SELECT * FROM statestreet.b_statestreet.future WHERE first_delivery_datetime_utc > last_delivery_datetime_utc;
+  column: first_delivery_datetime_utc
+  related_dq_issue_ids: DQ00020
+- rule_id: RULE0091
+  table: listed_derivative
+  dq_dimension: Consistency
+  rule_type: CROSS_TABLE_LOGIC
+  severity: MEDIUM
+  description: last_trade_date must be on or after the parent Product.issue_date.
+  sql: SELECT ld.* FROM statestreet.b_statestreet.listed_derivative ld JOIN statestreet.b_statestreet.product p ON ld.product_id
+    = p.product_id WHERE ld.last_trade_date < p.issue_date;
+  column: last_trade_date
+  related_dq_issue_ids: DQ00018
+- rule_id: RULE0092
+  table: product
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: product.issuer_legal_entity_id must exist in legal_entity.legal_entity_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.product c LEFT JOIN statestreet.b_statestreet.legal_entity p ON c.issuer_legal_entity_id
+    = p.legal_entity_id WHERE c.issuer_legal_entity_id IS NOT NULL AND c.issuer_legal_entity_id <> '' AND p.legal_entity_id
+    IS NULL;
+  column: issuer_legal_entity_id
+  related_dq_issue_ids: DQ00027
+- rule_id: RULE0093
+  table: product
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: product.tick_ladder_scale_id must exist in tick_ladder_scale.tick_ladder_scale_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.product c LEFT JOIN statestreet.b_statestreet.tick_ladder_scale p ON c.tick_ladder_scale_id
+    = p.tick_ladder_scale_id WHERE c.tick_ladder_scale_id IS NOT NULL AND c.tick_ladder_scale_id <> '' AND p.tick_ladder_scale_id
+    IS NULL;
+  column: tick_ladder_scale_id
+  related_dq_issue_ids: DQ00028
+- rule_id: RULE0094
+  table: generic_product
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: generic_product.product_id must exist in product.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.generic_product c LEFT JOIN statestreet.b_statestreet.product p ON c.product_id
+    = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0095
+  table: generic_product
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: generic_product.gs_legacy_prime_issue_currency must exist in currency.code.
+  sql: SELECT c.* FROM statestreet.b_statestreet.generic_product c LEFT JOIN statestreet.b_statestreet.currency p ON c.gs_legacy_prime_issue_currency
+    = p.code WHERE c.gs_legacy_prime_issue_currency IS NOT NULL AND c.gs_legacy_prime_issue_currency <> '' AND p.code IS NULL;
+  column: gs_legacy_prime_issue_currency
+  related_dq_issue_ids: DQ00030
+- rule_id: RULE0096
+  table: classification
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: classification.product_id must exist in product.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.classification c LEFT JOIN statestreet.b_statestreet.product p ON c.product_id
+    = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+  related_dq_issue_ids: DQ00031
+- rule_id: RULE0097
+  table: identifiers
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: identifiers.product_id must exist in product.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.identifiers c LEFT JOIN statestreet.b_statestreet.product p ON c.product_id
+    = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0098
+  table: product_rating
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: product_rating.product_id must exist in product.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.product_rating c LEFT JOIN statestreet.b_statestreet.product p ON c.product_id
+    = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+  related_dq_issue_ids: DQ00039
+- rule_id: RULE0099
+  table: product_rating
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: product_rating.product_rating_type_id must exist in product_rating_type.product_rating_type_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.product_rating c LEFT JOIN statestreet.b_statestreet.product_rating_type
+    p ON c.product_rating_type_id = p.product_rating_type_id WHERE c.product_rating_type_id IS NOT NULL AND c.product_rating_type_id
+    <> '' AND p.product_rating_type_id IS NULL;
+  column: product_rating_type_id
+  related_dq_issue_ids: DQ00038
+- rule_id: RULE0100
+  table: stock
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: stock.product_id must exist in product.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.stock c LEFT JOIN statestreet.b_statestreet.product p ON c.product_id = p.product_id
+    WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0101
+  table: stock
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: stock.series_id must exist in series.series_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.stock c LEFT JOIN statestreet.b_statestreet.series p ON c.series_id = p.series_id
+    WHERE c.series_id IS NOT NULL AND c.series_id <> '' AND p.series_id IS NULL;
+  column: series_id
+- rule_id: RULE0102
+  table: common_stock
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: common_stock.product_id must exist in stock.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.common_stock c LEFT JOIN statestreet.b_statestreet.stock p ON c.product_id
+    = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+  related_dq_issue_ids: DQ00008
+- rule_id: RULE0103
+  table: preferred_stock
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: preferred_stock.product_id must exist in stock.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.preferred_stock c LEFT JOIN statestreet.b_statestreet.stock p ON c.product_id
+    = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0104
+  table: debt
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: debt.product_id must exist in product.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.debt c LEFT JOIN statestreet.b_statestreet.product p ON c.product_id = p.product_id
+    WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0105
+  table: bond
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: bond.product_id must exist in debt.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.bond c LEFT JOIN statestreet.b_statestreet.debt p ON c.product_id = p.product_id
+    WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0106
+  table: bond
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: bond.issue_currency_code must exist in currency.code.
+  sql: SELECT c.* FROM statestreet.b_statestreet.bond c LEFT JOIN statestreet.b_statestreet.currency p ON c.issue_currency_code
+    = p.code WHERE c.issue_currency_code IS NOT NULL AND c.issue_currency_code <> '' AND p.code IS NULL;
+  column: issue_currency_code
+  related_dq_issue_ids: DQ00011
+- rule_id: RULE0107
+  table: muni
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: muni.product_id must exist in bond.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.muni c LEFT JOIN statestreet.b_statestreet.bond p ON c.product_id = p.product_id
+    WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+  related_dq_issue_ids: DQ00012
+- rule_id: RULE0108
+  table: pool_backed_security
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: pool_backed_security.product_id must exist in debt.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.pool_backed_security c LEFT JOIN statestreet.b_statestreet.debt p ON c.product_id
+    = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0109
+  table: fund
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: fund.product_id must exist in product.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.fund c LEFT JOIN statestreet.b_statestreet.product p ON c.product_id = p.product_id
+    WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0110
+  table: right
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: right.product_id must exist in product.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.right c LEFT JOIN statestreet.b_statestreet.product p ON c.product_id = p.product_id
+    WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0111
+  table: listed_derivative
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: listed_derivative.product_id must exist in product.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.listed_derivative c LEFT JOIN statestreet.b_statestreet.product p ON c.product_id
+    = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0112
+  table: listed_derivative
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: listed_derivative.series_id must exist in series.series_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.listed_derivative c LEFT JOIN statestreet.b_statestreet.series p ON c.series_id
+    = p.series_id WHERE c.series_id IS NOT NULL AND c.series_id <> '' AND p.series_id IS NULL;
+  column: series_id
+- rule_id: RULE0113
+  table: option
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: option.product_id must exist in listed_derivative.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.option c LEFT JOIN statestreet.b_statestreet.listed_derivative p ON c.product_id
+    = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0114
+  table: option
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: option.strike_currency_code must exist in currency.code.
+  sql: SELECT c.* FROM statestreet.b_statestreet.option c LEFT JOIN statestreet.b_statestreet.currency p ON c.strike_currency_code
+    = p.code WHERE c.strike_currency_code IS NOT NULL AND c.strike_currency_code <> '' AND p.code IS NULL;
+  column: strike_currency_code
+- rule_id: RULE0115
+  table: future
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: future.product_id must exist in listed_derivative.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.future c LEFT JOIN statestreet.b_statestreet.listed_derivative p ON c.product_id
+    = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0116
+  table: coupon
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: coupon.bond_id must exist in bond.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.coupon c LEFT JOIN statestreet.b_statestreet.bond p ON c.bond_id = p.product_id
+    WHERE c.bond_id IS NOT NULL AND c.bond_id <> '' AND p.product_id IS NULL;
+  column: bond_id
+  related_dq_issue_ids: DQ00014
+- rule_id: RULE0117
+  table: tick
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: tick.tick_currency_code must exist in currency.code.
+  sql: SELECT c.* FROM statestreet.b_statestreet.tick c LEFT JOIN statestreet.b_statestreet.currency p ON c.tick_currency_code
+    = p.code WHERE c.tick_currency_code IS NOT NULL AND c.tick_currency_code <> '' AND p.code IS NULL;
+  column: tick_currency_code
+  related_dq_issue_ids: DQ00007
+- rule_id: RULE0118
+  table: listed_derivative_tick
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: listed_derivative_tick.product_id must exist in listed_derivative.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.listed_derivative_tick c LEFT JOIN statestreet.b_statestreet.listed_derivative
+    p ON c.product_id = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0119
+  table: listed_derivative_tick
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: listed_derivative_tick.tick_id must exist in tick.tick_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.listed_derivative_tick c LEFT JOIN statestreet.b_statestreet.tick p ON c.tick_id
+    = p.tick_id WHERE c.tick_id IS NOT NULL AND c.tick_id <> '' AND p.tick_id IS NULL;
+  column: tick_id
+- rule_id: RULE0120
+  table: debt_principal_redemption_provision
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: debt_principal_redemption_provision.product_id must exist in debt.product_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.debt_principal_redemption_provision c LEFT JOIN statestreet.b_statestreet.debt
+    p ON c.product_id = p.product_id WHERE c.product_id IS NOT NULL AND c.product_id <> '' AND p.product_id IS NULL;
+  column: product_id
+- rule_id: RULE0121
+  table: debt_principal_redemption_provision
+  dq_dimension: Accuracy/Integrity
+  rule_type: FOREIGN_KEY
+  severity: CRITICAL
+  description: debt_principal_redemption_provision.principal_redemption_provision_id must exist in principal_redemption_provision.principal_redemption_provision_id.
+  sql: SELECT c.* FROM statestreet.b_statestreet.debt_principal_redemption_provision c LEFT JOIN statestreet.b_statestreet.principal_redemption_provision
+    p ON c.principal_redemption_provision_id = p.principal_redemption_provision_id WHERE c.principal_redemption_provision_id
+    IS NOT NULL AND c.principal_redemption_provision_id <> '' AND p.principal_redemption_provision_id IS NULL;
+  column: principal_redemption_provision_id
+  related_dq_issue_ids: DQ00041
+- rule_id: RULE0122
+  table: common_stock
+  dq_dimension: Consistency
+  rule_type: CROSS_TABLE_DISCRIMINATOR
+  severity: HIGH
+  description: Stock subtype rows (common_stock) must correspond to a Product with type='EQUITY'.
+  sql: SELECT t.* FROM statestreet.b_statestreet.common_stock t JOIN statestreet.b_statestreet.product p ON t.product_id =
+    p.product_id WHERE p.type <> 'EQUITY';
+  column: product_id
+  related_dq_issue_ids: DQ00008
+- rule_id: RULE0123
+  table: preferred_stock
+  dq_dimension: Consistency
+  rule_type: CROSS_TABLE_DISCRIMINATOR
+  severity: HIGH
+  description: Stock subtype rows (preferred_stock) must correspond to a Product with type='EQUITY'.
+  sql: SELECT t.* FROM statestreet.b_statestreet.preferred_stock t JOIN statestreet.b_statestreet.product p ON t.product_id
+    = p.product_id WHERE p.type <> 'EQUITY';
+  column: product_id
+- rule_id: RULE0124
+  table: debt
+  dq_dimension: Consistency
+  rule_type: CROSS_TABLE_DISCRIMINATOR
+  severity: HIGH
+  description: Debt rows must correspond to a Product with type='DEBT'.
+  sql: SELECT t.* FROM statestreet.b_statestreet.debt t JOIN statestreet.b_statestreet.product p ON t.product_id = p.product_id
+    WHERE p.type <> 'DEBT';
+  column: product_id
+- rule_id: RULE0125
+  table: fund
+  dq_dimension: Consistency
+  rule_type: CROSS_TABLE_DISCRIMINATOR
+  severity: HIGH
+  description: Fund rows must correspond to a Product with type='FUND'.
+  sql: SELECT t.* FROM statestreet.b_statestreet.fund t JOIN statestreet.b_statestreet.product p ON t.product_id = p.product_id
+    WHERE p.type <> 'FUND';
+  column: product_id
+- rule_id: RULE0126
+  table: right
+  dq_dimension: Consistency
+  rule_type: CROSS_TABLE_DISCRIMINATOR
+  severity: HIGH
+  description: Right rows must correspond to a Product with type='RIGHT'.
+  sql: SELECT t.* FROM statestreet.b_statestreet.right t JOIN statestreet.b_statestreet.product p ON t.product_id = p.product_id
+    WHERE p.type <> 'RIGHT';
+  column: product_id
+- rule_id: RULE0127
+  table: listed_derivative
+  dq_dimension: Consistency
+  rule_type: CROSS_TABLE_DISCRIMINATOR
+  severity: HIGH
+  description: ListedDerivative rows must correspond to a Product with type='DERIVATIVE'.
+  sql: SELECT t.* FROM statestreet.b_statestreet.listed_derivative t JOIN statestreet.b_statestreet.product p ON t.product_id
+    = p.product_id WHERE p.type <> 'DERIVATIVE';
+  column: product_id
+- rule_id: RULE0128
+  table: muni
+  dq_dimension: Consistency
+  rule_type: CROSS_TABLE_DISCRIMINATOR
+  severity: HIGH
+  description: Muni rows must correspond to a Product with type='DEBT' and a matching Bond record.
+  sql: SELECT m.* FROM statestreet.b_statestreet.muni m JOIN statestreet.b_statestreet.product p ON m.product_id = p.product_id
+    LEFT JOIN statestreet.b_statestreet.bond b ON m.product_id = b.product_id WHERE p.type <> 'DEBT' OR b.product_id IS NULL;
+  column: product_id
+  related_dq_issue_ids: DQ00012

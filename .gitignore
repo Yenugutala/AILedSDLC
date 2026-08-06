@@ -1,0 +1,33 @@
+# Pipeline runtime state (do not commit)
+use-cases/**/agent_state.yaml
+.agent_tmp/
+
+# Generated code (appears as PR diff, not committed directly)
+generated/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+.venv2/
+venv/
+.env
+
+# Secrets
+.env.local
+*.pat
+databricks_token.txt
+.mcp.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,107 @@
+# Securities Master Data Lakehouse — Use Case Request
+# This is the ONLY file teams need to fill in.
+# Run: sml generate --use-case securities-master
+
+use_case_name: securities-master
+
+description: |
+  Ingest 29 security CSV files (product, bond, stock, fund, identifiers, etc.)
+  from Databricks Volume into a Bronze/Silver/Gold medallion lakehouse.
+
+  Data model: Class-table inheritance. Every security has one row in 'product'
+  plus one row in each applicable subtype table (bond, stock, fund, etc.).
+  The join key across ALL tables is product_id.
+
+  Bronze = raw landing, no transformation, schema drift handled.
+  Silver = DQ-conformed (128 rules from dq_rules_catalog.csv), rejects quarantined,
+           SCD2 applied to bitemporal entities (product, legal_entity, product_rating).
+  Gold = 4 dimensional marts:
+    - dim_product (one row per product, all subtype attributes flattened)
+    - dim_legal_entity (one row per legal entity)
+    - fact_product_rating (one row per product per rating date)
+    - fact_coupon_schedule (one row per bond per coupon payment date)
+
+source:
+  type: volume
+  path: /Volumes/statestreet/securities_master/raw_files/
+  format: csv
+  delimiter: ","
+  header: true
+  tables:
+    - product
+    - generic_product
+    - legal_entity
+    - tick_ladder_scale
+    - tick
+    - product_rating
+    - product_rating_type
+    - classification
+    - identifiers
+    - fund
+    - debt
+    - bond
+    - muni
+    - pool_backed_security
+    - right
+    - series
+    - listed_derivative
+    - option
+    - future
+    - stock
+    - common_stock
+    - preferred_stock
+    - coupon
+    - principal_redemption_provision
+    - currency
+    - listed_derivative_tick
+    - debt_principal_redemption_provision
+    - dq_rules_catalog
+    - dq_issues_catalog
+
+code_generation:
+  bronze: python        # PySpark ingestion notebooks (Databricks Runtime)
+  silver: sql           # Databricks SQL conformance notebooks
+  gold: sql             # Databricks SQL mart build notebooks
+  dq_framework: sql     # DQ checks as SQL SELECT statements
+
+catalog:
+  name: statestreet
+  bronze_schema: b_statestreet
+  silver_schema: s_statestreet
+  gold_schema: g_statestreet
+
+volume:
+  path: /Volumes/statestreet/securities_master/raw_files/
+
+scd2_tables:
+  - product          # Bitemporal in original model
+  - legal_entity     # Bitemporal in original model
+  - product_rating   # Rating history (temporal)
+
+gold_marts:
+  - name: dim_product
+    grain: one_row_per_product
+    description: Flattened product dimension with all subtype attributes
+
+  - name: dim_legal_entity
+    grain: one_row_per_entity
+    description: Legal entity dimension
+
+  - name: fact_product_rating
+    grain: one_row_per_product_per_rating_date
+    description: Product rating history fact table
+
+  - name: fact_coupon_schedule
+    grain: one_row_per_bond_per_coupon_payment_date
+    description: Coupon payment schedule fact table
+
+dq_reference:
+  issues_catalog: dq_issues_catalog.csv    # 41 seeded DQ issues
+  rules_catalog: dq_rules_catalog.csv      # 128 DQ rules
+  validation_queries: dq_validation_queries.sql
+
+stakeholders:
+  - role: data_owner
+    name: State Street Data Office
+  - role: architect_approver
+    name: Senior Data Architect

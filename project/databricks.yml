@@ -1,0 +1,144 @@
+# Databricks Asset Bundle — Securities Master Lakehouse
+# Deploy: databricks bundle deploy
+# Run:    databricks bundle run orchestrate_pipeline_job
+
+bundle:
+  name: securities-master-lakehouse
+
+variables:
+  databricks_host:
+    description: Databricks workspace URL
+    default: ""
+  catalog:
+    description: Unity Catalog name
+    default: statestreet
+
+targets:
+  dev:
+    workspace:
+      host: ${var.databricks_host}
+    default: true
+    mode: development
+
+  prod:
+    workspace:
+      host: ${var.databricks_host}
+    mode: production
+
+resources:
+  jobs:
+    bronze_ingest_job:
+      name: "[SML] 03 Bronze Ingest — Securities Master"
+      description: "Ingest 29 CSV files from Databricks Volume to Bronze Delta tables"
+      tasks:
+        - task_key: bronze_ingest
+          notebook_task:
+            notebook_path: notebooks/03_bronze_ingest.py
+            base_parameters:
+              batch_id: "{{job.run_id}}"
+      job_clusters:
+        - job_cluster_key: securities_cluster
+          new_cluster:
+            spark_version: "13.3.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 2
+            spark_conf:
+              "spark.databricks.delta.preview.enabled": "true"
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure:
+          - data-engineering@statestreet.com
+
+    silver_conform_job:
+      name: "[SML] 04 Silver Conformance — Securities Master"
+      description: "DQ checks + SCD2 + rejects for all 27 security tables"
+      tasks:
+        - task_key: silver_conform
+          notebook_task:
+            notebook_path: notebooks/04_silver_conform.sql
+            base_parameters:
+              dq_rule_version: "{{job.run_id}}"
+        - task_key: dq_report
+          depends_on:
+            - task_key: silver_conform
+          notebook_task:
+            notebook_path: notebooks/04b_dq_report.py
+          # Gate 4a: Job pauses here for data owner approval
+          # Approval via Databricks webhook or manual trigger
+      job_clusters:
+        - job_cluster_key: securities_cluster
+          new_cluster:
+            spark_version: "13.3.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 2
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure:
+          - data-engineering@statestreet.com
+
+    gold_mart_job:
+      name: "[SML] 05 Gold Mart Build — Securities Master"
+      description: "Build dim_product, dim_legal_entity, fact_product_rating, fact_coupon_schedule"
+      tasks:
+        - task_key: gold_build
+          notebook_task:
+            notebook_path: notebooks/05_gold_build.sql
+      job_clusters:
+        - job_cluster_key: securities_cluster
+          new_cluster:
+            spark_version: "13.3.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 2
+      max_concurrent_runs: 1
+
+    orchestrate_pipeline_job:
+      name: "[SML] Full Pipeline — Securities Master (01→06)"
+      description: "Run all notebooks in order: setup → upload → bronze → silver → gold → genie"
+      tasks:
+        - task_key: setup_catalog
+          notebook_task:
+            notebook_path: notebooks/01_setup_catalog.py
+        - task_key: upload_raw_files
+          depends_on:
+            - task_key: setup_catalog
+          notebook_task:
+            notebook_path: notebooks/02_upload_raw_files.py
+        - task_key: bronze_ingest
+          depends_on:
+            - task_key: upload_raw_files
+          notebook_task:
+            notebook_path: notebooks/03_bronze_ingest.py
+            base_parameters:
+              batch_id: "{{job.run_id}}"
+        - task_key: silver_conform
+          depends_on:
+            - task_key: bronze_ingest
+          notebook_task:
+            notebook_path: notebooks/04_silver_conform.sql
+            base_parameters:
+              dq_rule_version: "{{job.run_id}}"
+        - task_key: gold_build
+          depends_on:
+            - task_key: silver_conform
+          notebook_task:
+            notebook_path: notebooks/05_gold_build.sql
+        - task_key: setup_genie
+          depends_on:
+            - task_key: gold_build
+          notebook_task:
+            notebook_path: notebooks/06_setup_genie.py
+      job_clusters:
+        - job_cluster_key: securities_cluster
+          new_cluster:
+            spark_version: "13.3.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 2
+            autoscale:
+              min_workers: 1
+              max_workers: 4
+      max_concurrent_runs: 1
+      email_notifications:
+        on_success:
+          - data-engineering@statestreet.com
+        on_failure:
+          - data-engineering@statestreet.com

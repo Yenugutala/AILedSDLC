@@ -1,0 +1,235 @@
+# Silver Layer — DQ-conformed, SCD2 applied, rejects quarantined
+# Schema: statestreet.s_statestreet
+# All 27 security tables (excludes dq_rules_catalog and dq_issues_catalog — metadata only)
+
+layer: silver
+catalog: statestreet
+schema: s_statestreet
+
+tables:
+
+  - name: product
+    source_bronze: statestreet.b_statestreet.product
+    primary_key: [product_id]
+    partition_by: [type]
+    iceberg_uniform: true
+    scd_type: 2                         # Bitemporal in original model
+    rejects_table: product_rejects
+
+  - name: bond
+    source_bronze: statestreet.b_statestreet.bond
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1                         # Point-in-time only
+    rejects_table: bond_rejects
+
+  - name: stock
+    source_bronze: statestreet.b_statestreet.stock
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: stock_rejects
+
+  - name: common_stock
+    source_bronze: statestreet.b_statestreet.common_stock
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: common_stock_rejects
+
+  - name: preferred_stock
+    source_bronze: statestreet.b_statestreet.preferred_stock
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: preferred_stock_rejects
+
+  - name: debt
+    source_bronze: statestreet.b_statestreet.debt
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: debt_rejects
+
+  - name: muni
+    source_bronze: statestreet.b_statestreet.muni
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: muni_rejects
+
+  - name: pool_backed_security
+    source_bronze: statestreet.b_statestreet.pool_backed_security
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: pool_backed_security_rejects
+
+  - name: fund
+    source_bronze: statestreet.b_statestreet.fund
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: fund_rejects
+
+  - name: right
+    source_bronze: statestreet.b_statestreet.right
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: right_rejects
+
+  - name: listed_derivative
+    source_bronze: statestreet.b_statestreet.listed_derivative
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: listed_derivative_rejects
+
+  - name: option
+    source_bronze: statestreet.b_statestreet.option
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: option_rejects
+
+  - name: future
+    source_bronze: statestreet.b_statestreet.future
+    primary_key: [product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: future_rejects
+
+  - name: legal_entity
+    source_bronze: statestreet.b_statestreet.legal_entity
+    primary_key: [legal_entity_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 2                         # Bitemporal in original model
+    rejects_table: legal_entity_rejects
+
+  - name: currency
+    source_bronze: statestreet.b_statestreet.currency
+    primary_key: [code]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: currency_rejects
+    note: 2 bad rows expected (seeded DQ issues)
+
+  - name: series
+    source_bronze: statestreet.b_statestreet.series
+    primary_key: [series_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: series_rejects
+
+  - name: tick_ladder_scale
+    source_bronze: statestreet.b_statestreet.tick_ladder_scale
+    primary_key: [tick_ladder_scale_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: tick_ladder_scale_rejects
+
+  - name: tick
+    source_bronze: statestreet.b_statestreet.tick
+    primary_key: [tick_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: tick_rejects
+
+  - name: identifiers
+    source_bronze: statestreet.b_statestreet.identifiers
+    primary_key: [identifiers_id]
+    partition_by: [product_id]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: identifiers_rejects
+
+  - name: classification
+    source_bronze: statestreet.b_statestreet.classification
+    primary_key: [classification_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: classification_rejects
+
+  - name: product_rating
+    source_bronze: statestreet.b_statestreet.product_rating
+    primary_key: [product_rating_id]
+    partition_by: [effective_from_date]
+    iceberg_uniform: true
+    scd_type: 2                         # Temporal: rating history
+    rejects_table: product_rating_rejects
+
+  - name: product_rating_type
+    source_bronze: statestreet.b_statestreet.product_rating_type
+    primary_key: [product_rating_type_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: product_rating_type_rejects
+
+  - name: coupon
+    source_bronze: statestreet.b_statestreet.coupon
+    primary_key: [coupon_id]
+    partition_by: [payment_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: coupon_rejects
+
+  - name: principal_redemption_provision
+    source_bronze: statestreet.b_statestreet.principal_redemption_provision
+    primary_key: [principal_redemption_provision_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: principal_redemption_provision_rejects
+
+  - name: generic_product
+    source_bronze: statestreet.b_statestreet.generic_product
+    primary_key: [generic_product_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: generic_product_rejects
+    note: deprecated legacy table — no PK uniqueness DQ rule (many rows per product by design)
+
+  - name: listed_derivative_tick
+    source_bronze: statestreet.b_statestreet.listed_derivative_tick
+    primary_key: [product_id, tick_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: listed_derivative_tick_rejects
+
+  - name: debt_principal_redemption_provision
+    source_bronze: statestreet.b_statestreet.debt_principal_redemption_provision
+    primary_key: [product_id, principal_redemption_provision_id]
+    partition_by: [_ingestion_date]
+    iceberg_uniform: true
+    scd_type: 1
+    rejects_table: debt_principal_redemption_provision_rejects
+
+scd2_columns:
+  - effective_start_date             # DATE — when this version became active
+  - effective_end_date               # DATE — 9999-12-31 for current version
+  - is_current                       # BOOLEAN — TRUE for active version
+
+dq_columns:
+  - _dq_rule_version                 # STRING — SHA256 of silver/rules.yaml at time of DQ check

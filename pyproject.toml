@@ -1,0 +1,31 @@
+[project]
+name = "sml-pipeline"
+version = "1.0.0"
+description = "Securities Master Data Lakehouse — BMAD Agentic Pipeline"
+requires-python = ">=3.9"
+dependencies = [
+    "anthropic>=0.25",
+    "click>=8.0",
+    "pyyaml>=6.0",
+    "databricks-sdk>=0.20",
+    "gitpython>=3.1",
+    "rich>=13.0",
+]
+
+[project.scripts]
+sml = "agents.cli:main"
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["agentic"]
+include = ["agents*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
