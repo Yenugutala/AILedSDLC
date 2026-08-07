@@ -645,4 +645,27 @@ COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.effective_from_d
   'Date the rating was assigned or last confirmed. DATE format (YYYY-MM-DD).';
 
 COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.rating_value IS
-  'Credit rating code. Examples: AAA, AA+, AA, AA-, A+, A, A-, BBB+,
+  'Credit rating code assigned by the rating agency. Examples: AAA, AA+, AA, BBB+, BB, CCC. Higher grade = lower credit risk.';
+
+-- COMMAND ----------
+
+COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.product_rating_type_id IS
+  'FK to Silver product_rating_type. Identifies the rating scale and agency used.';
+
+COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.rating_agency IS
+  'Name of the credit rating agency. Examples: Moody''s, S&P, Fitch.';
+
+COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.watch_code IS
+  'Rating watch or outlook indicator. Examples: POSITIVE, NEGATIVE, STABLE, DEVELOPING. NULL if no watch.';
+
+COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.rating_scale IS
+  'The rating scale used by the agency (e.g. LONG_TERM, SHORT_TERM). From product_rating_type lookup.';
+
+COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.rating_type_code IS
+  'Code identifying the rating type within the agency''s scale. From product_rating_type lookup.';
+
+COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.product_type IS
+  'Product type at time of Gold build. Denormalized from dim_product for query convenience.';
+
+COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.product_status IS
+  'Product lifecycle status at time of Gold build. Values: ACTIVE, INACTIVE, MATURED, SUSPENDED, DELISTED.';
