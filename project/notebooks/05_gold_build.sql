@@ -1,4 +1,3 @@
-```sql
 -- Databricks notebook source
 -- MAGIC %md
 -- MAGIC # Gold Layer — Dimensional Marts
@@ -40,13 +39,13 @@ CREATE SCHEMA IF NOT EXISTS statestreet.g_statestreet
 
 CREATE OR REPLACE TABLE statestreet.g_statestreet.dim_legal_entity
   USING DELTA
-  TBLPROPERTIES ('delta.universalFormat.enabledFormats' = 'iceberg')
+  TBLPROPERTIES ('delta.columnMapping.mode' = 'name', 'delta.enableIcebergCompatV2' = 'true', 'delta.universalFormat.enabledFormats' = 'iceberg')
 AS
 SELECT
   le.legal_entity_id,
-  le.name                           AS legal_entity_name,
+  le.legal_name                     AS legal_entity_name,
   le.country,
-  le.entity_type,
+  CAST(NULL AS STRING)              AS entity_type,
   -- SCD2 provenance columns carried forward from Silver
   le.effective_start_date,
   le.effective_end_date,
@@ -86,7 +85,7 @@ WHERE le.is_current = TRUE;
 CREATE OR REPLACE TABLE statestreet.g_statestreet.dim_product
   USING DELTA
   PARTITIONED BY (type)
-  TBLPROPERTIES ('delta.universalFormat.enabledFormats' = 'iceberg')
+  TBLPROPERTIES ('delta.columnMapping.mode' = 'name', 'delta.enableIcebergCompatV2' = 'true', 'delta.universalFormat.enabledFormats' = 'iceberg')
 AS
 SELECT
   -- ── Base product columns ──────────────────────────────────────────────────
@@ -111,20 +110,20 @@ SELECT
   st.series_id                      AS stock_series_id,
 
   -- ── CommonStock columns (NULL for non-common-stock) ─────────────────────
-  cs.voting_rights,
+  CAST(NULL AS BOOLEAN)             AS voting_rights,
 
   -- ── PreferredStock columns (NULL for non-preferred-stock) ────────────────
-  ps.dividend_type,
+  ps.dividend_right                 AS dividend_type,
 
   -- ── Debt columns (NULL for non-debt products) ────────────────────────────
-  d.face_amount,
-  d.issue_date_settlement,
+  d.total_amount_issued             AS face_amount,
+  CAST(NULL AS DATE)                AS issue_date_settlement,
 
   -- ── Bond columns (NULL for non-bond products) ────────────────────────────
   b.coupon_type,
   b.maturity_date,
-  b.face_currency_code,
-  b.day_count_convention,
+  b.issue_currency_code             AS face_currency_code,
+  CAST(NULL AS STRING)              AS day_count_convention,
 
   -- ── Muni columns (NULL for non-muni products) ────────────────────────────
   mn.tax_exempt,
@@ -140,7 +139,7 @@ SELECT
   f.mutual_fund_type,
 
   -- ── Right columns (NULL for non-right products) ──────────────────────────
-  r.subscription_ratio,
+  CAST(NULL AS DECIMAL(28,8))       AS subscription_ratio,
 
   -- ── ListedDerivative columns (NULL for non-derivatives) ──────────────────
   ld.series_id                      AS derivative_series_id,
@@ -202,26 +201,29 @@ WHERE p.is_current = TRUE;
 CREATE OR REPLACE TABLE statestreet.g_statestreet.fact_product_rating
   USING DELTA
   PARTITIONED BY (effective_from_date)
-  TBLPROPERTIES ('delta.universalFormat.enabledFormats' = 'iceberg')
+  TBLPROPERTIES ('delta.columnMapping.mode' = 'name', 'delta.enableIcebergCompatV2' = 'true', 'delta.universalFormat.enabledFormats' = 'iceberg')
 AS
 SELECT
   -- ── Grain key ─────────────────────────────────────────────────────────────
-  pr.rating_id,
+  pr.product_rating_id,
   pr.product_id,
-  pr.rating_date,
+  pr.effective_from_date,
 
   -- ── Rating detail ─────────────────────────────────────────────────────────
   pr.rating_value,
-  pr.rating_type_id,
+  pr.product_rating_type_id,
+  pr.rating_agency,
+  pr.watch_code,
 
   -- ── Rating type / agency metadata (from product_rating_type) ─────────────
-  prt.rating_agency,
-  prt.rating_category,
   prt.rating_scale,
+  prt.rating_type_code,
+  CAST(NULL AS STRING)              AS rating_category,
 
   -- ── SCD2 provenance from Silver product_rating ───────────────────────────
-  pr.effective_start_date           AS effective_from_date,
-  pr.effective_end_date             AS effective_to_date,
+  pr.effective_start_date,
+  pr.effective_end_date,
+  pr.is_current,
 
   -- ── Product context (status at time of Gold build) ───────────────────────
   p.type                            AS product_type,
@@ -239,7 +241,7 @@ FROM statestreet.s_statestreet.product_rating pr
 
 -- Rating type lookup — LEFT JOIN so ratings without a type record are still included
 LEFT JOIN statestreet.s_statestreet.product_rating_type prt
-  ON pr.rating_type_id = prt.rating_type_id
+  ON pr.product_rating_type_id = prt.product_rating_type_id
 
 -- Product context — INNER JOIN ensures only ratings for known current products
 INNER JOIN statestreet.s_statestreet.product p
@@ -261,7 +263,7 @@ WHERE pr.is_current = TRUE;
 CREATE OR REPLACE TABLE statestreet.g_statestreet.fact_coupon_schedule
   USING DELTA
   PARTITIONED BY (payment_date)
-  TBLPROPERTIES ('delta.universalFormat.enabledFormats' = 'iceberg')
+  TBLPROPERTIES ('delta.columnMapping.mode' = 'name', 'delta.enableIcebergCompatV2' = 'true', 'delta.universalFormat.enabledFormats' = 'iceberg')
 AS
 SELECT
   -- ── Grain key ─────────────────────────────────────────────────────────────
@@ -276,17 +278,13 @@ SELECT
 
   -- ── Bond context ──────────────────────────────────────────────────────────
   b.maturity_date,
-  b.face_currency_code,
-  b.day_count_convention,
+  b.issue_currency_code             AS face_currency_code,
+  CAST(NULL AS STRING)              AS day_count_convention,
 
   -- ── Product context ───────────────────────────────────────────────────────
   p.sub_type                        AS product_sub_type,
   p.status                          AS product_status,
   p.issuer_legal_entity_id,
-
-  -- ── SCD2 provenance from Silver coupon ───────────────────────────────────
-  c.effective_start_date,
-  c.effective_end_date,
 
   -- ── Metadata ─────────────────────────────────────────────────────────────
   c._ingestion_ts,
@@ -372,11 +370,11 @@ HAVING COUNT(*) > 1;
 
 SELECT
   product_id,
-  rating_date,
-  rating_type_id,
+  effective_from_date,
+  product_rating_type_id,
   COUNT(*)                          AS cnt
 FROM statestreet.g_statestreet.fact_product_rating
-GROUP BY product_id, rating_date, rating_type_id
+GROUP BY product_id, effective_from_date, product_rating_type_id
 HAVING COUNT(*) > 1;
 -- Expected: 0 rows
 
@@ -637,13 +635,13 @@ COMMENT ON TABLE statestreet.g_statestreet.fact_product_rating IS
 
 -- COMMAND ----------
 
-COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.rating_id IS
+COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.product_rating_id IS
   'Unique identifier for this rating record. Primary key.';
 
 COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.product_id IS
   'FK to dim_product.product_id. Identifies the rated security.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.rating_date IS
+COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.effective_from_date IS
   'Date the rating was assigned or last confirmed. DATE format (YYYY-MM-DD).';
 
 COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.rating_value IS

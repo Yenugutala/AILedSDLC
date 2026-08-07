@@ -191,3 +191,107 @@ description: "Securities table. Grain: one row per product_id."
 description: >
   Securities table. Grain: one row per product_id.
 ```
+
+---
+
+## ISSUE-014: CLI — .env variables not loaded, commands fail with missing credentials
+
+**Symptom**: `sml generate`, `sml deploy`, `sml run` etc. fail with missing
+`ANTHROPIC_API_KEY` or `DATABRICKS_TOKEN` even though `.env` is populated.
+
+**Cause**: `cli.py` did not call `load_dotenv()` on startup. Environment variables in
+`.env` were never loaded into the process environment.
+
+**Fix (already applied)**: Added `from dotenv import load_dotenv` and `load_dotenv()`
+at the top of `cli.py` before any agent imports.
+
+---
+
+## ISSUE-015: CLI — `--use-case` was required on every command, breaking zero-arg usage
+
+**Symptom**: Running `sml generate`, `sml deploy`, `sml run`, `sml status`, `sml debug`,
+or `sml validate` without `--use-case` failed with "Missing option '--use-case'".
+
+**Cause**: All six commands had `required=True` on the `--use-case` option.
+
+**Fix (already applied)**: Changed to `default="securities-master", show_default=True`
+on all six commands. Users can still override with `--use-case <name>`.
+
+---
+
+## ISSUE-016: deploy_agent — job status/trigger used SDK name lookup instead of bundle CLI
+
+**Symptom**: `sml status --job <name>` and `sml run --job <name>` failed with SDK
+errors ("job not found", auth errors) even with valid credentials.
+
+**Cause**: `get_job_status()` and `trigger_job()` used `WorkspaceClient().jobs.list()`
+and `jobs.run_now()` to look up jobs by display name. Bundle-deployed jobs use resource
+keys, not display names, making the SDK lookup unreliable.
+
+**Fix (already applied)**: Both functions now delegate to `databricks bundle run`
+(with `--refresh` for status) which correctly resolves bundle resource keys.
+
+---
+
+## ISSUE-017: deploy_agent — `openpgp: key expired` error during bundle deploy
+
+**Symptom**: `sml deploy` fails with:
+```
+Error: Failed to install terraform
+openpgp: key expired
+```
+
+**Cause**: The Databricks CLI tries to download and verify Terraform via a GPG key that
+has expired. If a local Terraform binary is present, it should be used directly.
+
+**Fix (already applied)**: `deploy_agent.py` now auto-detects a local `terraform` binary
+via `shutil.which("terraform")` and sets `DATABRICKS_TF_EXEC_PATH` to it before running
+`databricks bundle validate/deploy`. This bypasses the GPG-verified download.
+
+**If Terraform is not installed locally**:
+```bash
+brew install terraform   # macOS
+```
+
+---
+
+## ISSUE-018: databricks.yml — redundant `databricks_host` variable caused deploy errors
+
+**Symptom**: `databricks bundle validate` warns about `databricks_host` being unused,
+or deploy fails because `${var.databricks_host}` resolves to empty string.
+
+**Cause**: `databricks.yml` declared a `databricks_host` variable and referenced it as
+`workspace.host: ${var.databricks_host}`. The Databricks CLI already reads the host
+from `.databrickscfg` or environment variables — overriding it with an empty default
+caused authentication failures.
+
+**Fix (already applied)**: Removed the `databricks_host` variable and all `workspace.host`
+references from `databricks.yml`. Let the CLI resolve the workspace from `.databrickscfg`.
+
+---
+
+## ISSUE-019: databricks.yml — `dq_report` task referenced a non-existent notebook
+
+**Symptom**: `databricks bundle validate` fails with notebook path not found, or
+the Silver job fails at the `dq_report` task.
+
+**Cause**: `databricks.yml` defined a `dq_report` task pointing to
+`notebooks/04b_dq_report.py` which was never created.
+
+**Fix (already applied)**: Removed the `dq_report` task from the Silver job definition
+in `databricks.yml`. DQ reporting is handled inline in `04_silver_conform.sql`.
+
+---
+
+## ISSUE-020: databricks.yml — hardcoded `job_clusters` blocks caused serverless conflicts
+
+**Symptom**: Jobs failed to start, or Databricks showed cluster provisioning errors when
+serverless compute was expected.
+
+**Cause**: Each job in `databricks.yml` had a `job_clusters` block defining `i3.xlarge`
+clusters. When the workspace uses serverless compute by default, specifying `job_cluster_key`
+in tasks conflicts with serverless routing.
+
+**Fix (already applied)**: Removed all `job_clusters` blocks from all four jobs
+(`bronze_ingest_job`, `silver_conform_job`, `gold_build_job`, `orchestrate_pipeline_job`).
+Tasks now use the workspace-default compute (serverless or existing shared cluster).

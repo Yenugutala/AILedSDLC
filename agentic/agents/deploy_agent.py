@@ -5,6 +5,8 @@ Deploy Agent — validates and deploys Databricks Asset Bundle.
 Also provides job status, trigger utilities, and GitHub PR creation.
 """
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -18,6 +20,13 @@ console = Console()
 
 def deploy(use_case_name: str):
     """Run: databricks bundle validate + deploy."""
+    # Auto-detect local Terraform to avoid 'openpgp: key expired' checksum error
+    if not os.environ.get("DATABRICKS_TF_EXEC_PATH"):
+        tf = shutil.which("terraform")
+        if tf:
+            os.environ["DATABRICKS_TF_EXEC_PATH"] = tf
+            console.print(f"[dim]  Using local Terraform: {tf}[/]")
+
     console.print("[bold cyan][DEPLOY][/] Validating bundle...")
     _run("databricks bundle validate", cwd=REPO_ROOT)
 
@@ -28,38 +37,16 @@ def deploy(use_case_name: str):
 
 
 def get_job_status(job_name: str):
-    """Print the status of the most recent job run."""
-    try:
-        from databricks.sdk import WorkspaceClient
-        w = WorkspaceClient()
-        runs = list(w.jobs.list_runs(job_name_contains=job_name, limit=1))
-        if not runs:
-            console.print(f"[yellow]No runs found for: {job_name}[/]")
-            return
-        run = runs[0]
-        console.print(f"Job: {job_name}")
-        console.print(f"Run ID: {run.run_id}")
-        console.print(f"State: {run.state.life_cycle_state} / {run.state.result_state}")
-        console.print(f"Start time: {run.start_time}")
-    except Exception as e:
-        console.print(f"[red]Could not get job status: {e}[/]")
-        console.print("Ensure DATABRICKS_HOST and DATABRICKS_TOKEN are set.")
+    """Print the status of the most recent job run via bundle CLI."""
+    console.print(f"[bold cyan][STATUS][/] Checking run status for: {job_name}")
+    _run(f"databricks bundle run --refresh {job_name}", cwd=REPO_ROOT)
 
 
 def trigger_job(job_name: str):
-    """Trigger a Databricks job by name."""
-    try:
-        from databricks.sdk import WorkspaceClient
-        w = WorkspaceClient()
-        jobs = list(w.jobs.list(name=job_name))
-        if not jobs:
-            console.print(f"[red]Job not found: {job_name}[/]")
-            return
-        job_id = jobs[0].job_id
-        run = w.jobs.run_now(job_id=job_id)
-        console.print(f"[green]Job triggered: {job_name} (run_id={run.run_id})[/]")
-    except Exception as e:
-        console.print(f"[red]Could not trigger job: {e}[/]")
+    """Trigger a Databricks job by its bundle resource key."""
+    console.print(f"[bold cyan][RUN][/] Triggering job: {job_name}")
+    _run(f"databricks bundle run {job_name}", cwd=REPO_ROOT)
+    console.print(f"[green]Job triggered: {job_name}[/]")
 
 
 def create_pr(use_case_name: str) -> str:

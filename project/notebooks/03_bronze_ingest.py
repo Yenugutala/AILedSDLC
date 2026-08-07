@@ -1,4 +1,3 @@
-```python
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Bronze Ingestion — Securities Master Data
@@ -527,10 +526,24 @@ def _log_quarantine(table_name: str, change_type: str, columns: list[str]) -> No
 # ---------------------------------------------------------------------------
 
 def _enable_iceberg_uniform(table_full_name: str) -> None:
-    spark.sql(f"""
-        ALTER TABLE {table_full_name}
-        SET TBLPROPERTIES ('delta.universalFormat.enabledFormats' = 'iceberg')
-    """)
+    """
+    Enable Iceberg UniForm on a Delta table.
+    Requires: column mapping mode='name', IcebergCompatV2, no Deletion Vectors.
+    All three must be set in a single ALTER TABLE on existing tables.
+    Fails silently with a warning if pre-conditions are not met.
+    """
+    try:
+        spark.sql(f"""
+            ALTER TABLE {table_full_name}
+            SET TBLPROPERTIES (
+                'delta.columnMapping.mode' = 'name',
+                'delta.enableIcebergCompatV2' = 'true',
+                'delta.universalFormat.enabledFormats' = 'iceberg'
+            )
+        """)
+    except Exception as _iceberg_err:
+        print(f"  [WARN] Iceberg UniForm skipped for {table_full_name}: {_iceberg_err}")
+        print(f"  [WARN] Table is fully usable as a regular Delta table.")
 
 
 # ---------------------------------------------------------------------------
@@ -775,3 +788,70 @@ INGESTION_ORDER: list[str] = [
     "debt_principal_redemption_provision",
 
     # ── Group 5: DQ metadata tables (Bronze-only) ─────────────────────
+    "dq_rules_catalog",
+    "dq_issues_catalog",
+]
+
+# ---------------------------------------------------------------------------
+# Apply table filter (if tables_override widget was supplied)
+# ---------------------------------------------------------------------------
+RUN_TABLES: list[str] = (
+    [t for t in INGESTION_ORDER if t in TABLES_OVERRIDE]
+    if TABLES_OVERRIDE
+    else INGESTION_ORDER
+)
+
+print(f"\n[RUN] Ingesting {len(RUN_TABLES)} of {len(INGESTION_ORDER)} tables")
+print(f"      Tables: {', '.join(RUN_TABLES)}")
+
+# COMMAND ----------
+# MAGIC %md ## 6. Execute Ingestion Loop
+
+# COMMAND ----------
+
+results = []
+errors  = []
+
+for table_name in RUN_TABLES:
+    try:
+        result = ingest_table(table_name)
+        results.append(result)
+    except Exception as exc:
+        import traceback as _tb
+        err_msg = f"{type(exc).__name__}: {exc}"
+        errors.append({"table": table_name, "error": err_msg})
+        print(f"  [ERROR] {table_name}: {err_msg}")
+        print(_tb.format_exc())
+
+# COMMAND ----------
+# MAGIC %md ## 7. Summary
+
+# COMMAND ----------
+
+print(f"\n{'='*70}")
+print(f"[SUMMARY] Batch ID  : {BATCH_ID}")
+print(f"[SUMMARY] Tables run: {len(results)} succeeded, {len(errors)} failed")
+print(f"{'─'*70}")
+total_rows_read    = 0
+total_rows_written = 0
+for r in results:
+    print(f"  OK  {r['table']:35s}  read={r['rows_read']:>8,}  written={r['rows_written']:>8,}")
+    total_rows_read    += r["rows_read"]
+    total_rows_written += r["rows_written"]
+
+for e in errors:
+    print(f"  ERR {e['table']:35s}  ERROR: {e['error']}")
+
+print(f"{'─'*70}")
+print(f"[SUMMARY] Total rows read   : {total_rows_read:,}")
+print(f"[SUMMARY] Total rows written: {total_rows_written:,}")
+print(f"{'='*70}")
+
+if errors:
+    first = errors[0]
+    raise RuntimeError(
+        f"Bronze ingestion completed with {len(errors)} error(s). "
+        f"First failure — {first['table']}: {first['error']}"
+    )
+
+print("\n[DONE] Bronze ingestion completed successfully.")

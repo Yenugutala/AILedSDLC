@@ -13,7 +13,10 @@ Usage:
 """
 
 import click
+from dotenv import load_dotenv
 from agents import pipeline, debug_agent, validate_spec_agent
+
+load_dotenv()  # auto-load .env (DATABRICKS_HOST, DATABRICKS_TOKEN, ANTHROPIC_API_KEY)
 
 
 @click.group()
@@ -47,8 +50,9 @@ def setup(local_data_dir: str):
 @main.command()
 @click.option(
     "--use-case",
-    required=True,
-    help="Use-case name (folder under use-cases/). E.g. securities-master",
+    default="securities-master",
+    show_default=True,
+    help="Use-case name (folder under use-cases/).",
 )
 def generate(use_case: str):
     """
@@ -62,7 +66,7 @@ def generate(use_case: str):
 
 
 @main.command()
-@click.option("--use-case", required=True, help="Use-case name")
+@click.option("--use-case", default="securities-master", show_default=True, help="Use-case name")
 @click.option("--job", required=True, help="Failing Databricks job name")
 def debug(use_case: str, job: str):
     """
@@ -75,7 +79,7 @@ def debug(use_case: str, job: str):
 
 
 @main.command()
-@click.option("--use-case", required=True, help="Use-case name")
+@click.option("--use-case", default="securities-master", show_default=True, help="Use-case name")
 def deploy(use_case: str):
     """
     Deploy the Databricks Asset Bundle to the workspace.
@@ -87,7 +91,7 @@ def deploy(use_case: str):
 
 
 @main.command()
-@click.option("--use-case", required=True, help="Use-case name")
+@click.option("--use-case", default="securities-master", show_default=True, help="Use-case name")
 @click.option("--job", required=True, help="Databricks job name")
 def status(use_case: str, job: str):
     """Check the status of a running or completed Databricks job."""
@@ -96,7 +100,7 @@ def status(use_case: str, job: str):
 
 
 @main.command()
-@click.option("--use-case", required=True, help="Use-case name")
+@click.option("--use-case", default="securities-master", show_default=True, help="Use-case name")
 @click.option("--job", required=True, help="Databricks job name to trigger")
 def run(use_case: str, job: str):
     """Trigger a Databricks job run."""
@@ -105,7 +109,7 @@ def run(use_case: str, job: str):
 
 
 @main.command()
-@click.option("--use-case", required=True, help="Use-case name")
+@click.option("--use-case", default="securities-master", show_default=True, help="Use-case name")
 def validate(use_case: str):
     """
     Validate all spec YAML files against CLAUDE.md naming rules.
