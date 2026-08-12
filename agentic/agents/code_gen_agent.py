@@ -12,7 +12,6 @@ Generated files are written to generated/notebooks/ (gitignored).
 A GitHub PR is created at the end.
 """
 
-import os
 from pathlib import Path
 
 import anthropic
@@ -46,7 +45,7 @@ def run(ctx: AgentContext, layer_only: str | None = None) -> str:
         console.print(f"[dim]  Generating {layer} notebook...[/]")
         output = _generate_layer(client, ctx, system_prompt, layer)
         outputs.append(output)
-        _write_notebook(ctx, layer, output)
+        _write_notebook(layer, output)
 
     return "\n\n---\n\n".join(outputs)
 
@@ -95,7 +94,7 @@ Generate a complete Databricks notebook for the {layer} layer.
     return "".join(output_chunks)
 
 
-def _write_notebook(ctx: AgentContext, layer: str, output: str):
+def _write_notebook(layer: str, output: str):
     """Extract notebook code from agent output and write to generated/notebooks/."""
     ext_map = {"bronze": "py", "silver": "sql", "gold": "sql"}
     num_map = {"bronze": "03", "silver": "04", "gold": "05"}
@@ -105,13 +104,21 @@ def _write_notebook(ctx: AgentContext, layer: str, output: str):
 
     # Extract content between ### NOTEBOOK: <layer> marker and closing ```
     content = _extract_code_block(output, f"### NOTEBOOK: {layer}")
-    if content:
-        dest.write_text(content, encoding="utf-8")
-        console.print(f"  [green]✓[/] Written: {dest.relative_to(PROJECT_ROOT)}")
-    else:
-        # Fallback: write full output
-        dest.write_text(output, encoding="utf-8")
-        console.print(f"  [yellow]⚠[/] Written (raw): {dest.relative_to(PROJECT_ROOT)}")
+    if not content:
+        # Fallback: strip any wrapping code fence from the raw output
+        content = _strip_code_fence(output)
+    dest.write_text(content + "\n", encoding="utf-8")
+    console.print(f"  [green]✓[/] Written: {dest.relative_to(PROJECT_ROOT)}")
+
+
+def _strip_code_fence(text: str) -> str:
+    """Remove a wrapping ```...``` or ```sql/```python fence from text."""
+    lines = text.strip().split("\n")
+    if lines and lines[0].strip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
 
 
 def _extract_code_block(text: str, marker: str) -> str:
