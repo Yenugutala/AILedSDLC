@@ -351,3 +351,26 @@ definition without calling `ingest_table()`.
 - Added summary print block (rows read/written per table, total counts).
 - Added final `RuntimeError` raise if any table failed (so Databricks job marks as FAILED).
 - Appended `"dq_rules_catalog"` and `"dq_issues_catalog"` to `INGESTION_ORDER`.
+
+---
+
+## SETUP-014: Gold — `COMMENT ON COLUMN rating_value` truncated — unclosed SQL string literal
+
+**File**: `05_gold_build.sql`
+
+**Error**:
+```
+ParseException: [PARSE_SYNTAX_ERROR] Syntax error at or near '''. SQLSTATE: 42601 (line 2, pos 2)
+COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.rating_value IS
+  'Credit rating code. Examples: AAA, AA+, AA, AA-, A+, A, A-, BBB+,
+```
+
+**Cause**: The `COMMENT ON COLUMN` for `fact_product_rating.rating_value` was truncated
+mid-string — the file ended at line 647 without a closing quote or semicolon.
+Databricks parsed the next cell's SQL as a continuation of the unclosed string literal,
+causing the `ParseException`.
+
+**Fix (already applied)**: Completed the `rating_value` comment with a proper closing
+quote and semicolon, and added the remaining missing column comments for
+`fact_product_rating` (`product_rating_type_id`, `rating_agency`, `watch_code`,
+`rating_scale`, `rating_type_code`, `product_type`, `product_status`).

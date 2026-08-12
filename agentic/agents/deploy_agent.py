@@ -148,5 +148,6 @@ def _run(cmd: str, cwd: Path):
     if result.stdout:
         console.print(result.stdout)
     if result.returncode != 0:
-        console.print(f"[red]{result.stderr}[/]")
-        raise RuntimeError(f"Command failed: {cmd}")
+        err = result.stderr.strip() or result.stdout.strip()
+        console.print(f"[red]{err}[/]")
+        raise RuntimeError(f"Command failed: {cmd}\n{err}")
