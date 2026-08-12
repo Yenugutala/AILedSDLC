@@ -63,7 +63,7 @@ Each stage pauses for human approval before advancing. Type `approve` to proceed
 ## Folder Structure
 
 ```
-StateStreetDemo/
+AILedSDLC/
 ├── agentic/                        # Agent orchestration framework
 │   ├── agents/
 │   │   ├── pipeline.py             # State machine — drives agents through stages

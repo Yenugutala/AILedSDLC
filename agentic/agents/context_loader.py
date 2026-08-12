@@ -20,7 +20,7 @@ from typing import Optional
 AGENTIC_ROOT     = Path(__file__).parent.parent          # .../agentic/
 PROJECT_ROOT     = AGENTIC_ROOT.parent / "project"      # .../project/
 REPO_ROOT        = PROJECT_ROOT                          # alias used by rest of code
-STATESTREET_ROOT = AGENTIC_ROOT.parent                  # .../StateStreetDemo/ (repo root for outputs)
+STATESTREET_ROOT = AGENTIC_ROOT.parent                  # .../AILedSDLC/ (repo root for outputs)
 
 SKILLS_DIR = PROJECT_ROOT / "skills"
 CLAUDE_MD  = PROJECT_ROOT / "CLAUDE.md"
