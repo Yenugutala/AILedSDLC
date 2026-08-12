@@ -50,14 +50,19 @@ After all specs, write a short ARCHITECTURAL DECISIONS summary.
     )
 
     console.print("[dim]  Calling Claude API (Architect Agent)...[/]")
-    message = anthropic.Anthropic().messages.create(
+    console.print("[dim]  Reviewing Bronze → Silver → Gold specs for partitioning, SCD2, FK chain...[/]")
+    output_chunks = []
+    with client.messages.stream(
         model="claude-sonnet-4-6",
         max_tokens=8192,
         messages=[{"role": "user", "content": user_prompt}],
         system=system_prompt,
-    )
-
-    output = message.content[0].text
+    ) as stream:
+        for text in stream.text_stream:
+            print(text, end="", flush=True)
+            output_chunks.append(text)
+    print()
+    output = "".join(output_chunks)
 
     # Update spec files with architect's revisions
     from agents.ba_agent import _write_spec_files

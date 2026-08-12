@@ -54,14 +54,19 @@ Label each file exactly: ### TEST FILE: tests/test_bronze.py  (etc.)
 """)
 
     console.print("[dim]  Calling Claude API (QA Agent)...[/]")
-    message = client.messages.create(
+    console.print("[dim]  Generating pytest files for Bronze, Silver, Gold layers...[/]")
+    output_chunks = []
+    with client.messages.stream(
         model="claude-sonnet-4-6",
         max_tokens=8192,
         messages=[{"role": "user", "content": user_prompt}],
         system=system_prompt,
-    )
-
-    output = message.content[0].text
+    ) as stream:
+        for text in stream.text_stream:
+            print(text, end="", flush=True)
+            output_chunks.append(text)
+    print()
+    output = "".join(output_chunks)
     _write_test_files(output)
     return output
 

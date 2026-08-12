@@ -56,12 +56,24 @@ def run(use_case_name: str):
 
     current_stage = state.get("current_stage", "ba_review")
 
+    stage_descriptions = {
+        "ba_review":       "Analyzing business requirements and generating table specs...",
+        "architect_review":"Reviewing specs for partitioning, SCD2, and FK integrity...",
+        "code_gen":        "Generating Bronze (PySpark) and Silver/Gold (SQL) notebooks...",
+        "qa":              "Generating pytest and SQL test files for all layers...",
+        "doc":             "Generating Genie comments, lineage doc, and HLD...",
+        "deploy":          "Creating GitHub PR with all generated artifacts...",
+    }
+
     while current_stage != "done":
-        console.print(f"\n[bold yellow][{STAGE_LABELS.get(current_stage, current_stage).upper()}][/] Starting...")
+        label = STAGE_LABELS.get(current_stage, current_stage)
+        desc  = stage_descriptions.get(current_stage, "")
+        console.rule(f"[bold yellow]{label.upper()}[/]")
+        console.print(f"[dim]{desc}[/]\n")
 
         output = _run_stage(current_stage, ctx, state)
 
-        _show_output(output, STAGE_LABELS.get(current_stage, current_stage))
+        _show_output(output, label)
 
         # Human approval gate
         approved, feedback = _wait_for_approval(current_stage)

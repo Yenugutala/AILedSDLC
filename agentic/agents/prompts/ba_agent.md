@@ -20,7 +20,7 @@ Follow CLAUDE.md exactly:
 - Silver catalog/schema: `statestreet` / `s_statestreet`
 - Gold catalog/schema: `statestreet` / `g_statestreet`
 - Table names: keep original CSV names (product, bond, stock, fund, etc.)
-- Gold dimensions: `dim_<name>`; Gold facts: `fact_<name>`
+- Gold: single wide/flat table per use case — no `dim_` or `fact_` prefix (e.g. `securities_master`)
 
 ## tables.yaml Structure (Bronze example)
 ```yaml

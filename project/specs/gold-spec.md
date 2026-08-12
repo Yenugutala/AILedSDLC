@@ -1,0 +1,659 @@
+# Gold Layer Spec — securities-master
+
+## tables.yaml
+```yaml
+layer: gold
+catalog: statestreet
+schema: g_statestreet
+
+marts:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 1. dim_product
+  #    Grain: one row per product_id (current version only, is_current = TRUE)
+  #    Flattened wide table — all subtype attributes via LEFT JOIN
+  # ─────────────────────────────────────────────────────────────────────────────
+  - name: dim_product
+    description: "Flattened product dimension. Grain: one row per product_id. All subtype attributes (stock, bond, fund, derivative, right) joined and surfaced as nullable columns."
+    grain: one_row_per_product
+    source_tables:
+      - statestreet.s_statestreet.product
+      - statestreet.s_statestreet.generic_product
+      - statestreet.s_statestreet.stock
+      - statestreet.s_statestreet.common_stock
+      - statestreet.s_statestreet.preferred_stock
+      - statestreet.s_statestreet.debt
+      - statestreet.s_statestreet.bond
+      - statestreet.s_statestreet.muni
+      - statestreet.s_statestreet.pool_backed_security
+      - statestreet.s_statestreet.fund
+      - statestreet.s_statestreet.right
+      - statestreet.s_statestreet.listed_derivative
+      - statestreet.s_statestreet.option
+      - statestreet.s_statestreet.future
+      - statestreet.s_statestreet.series
+      - statestreet.s_statestreet.tick_ladder_scale
+      - statestreet.s_statestreet.legal_entity
+    join_key: product_id
+    filter: "p.is_current = TRUE"
+    partition_by: [type]
+    iceberg_uniform: true
+    scd2: false   # Gold dim is a current-state snapshot; SCD2 lives in Silver
+    columns:
+      # ── Core product attributes (from product) ───────────────────────────────
+      - name: product_id
+        type: STRING
+        nullable: false
+        source_table: product
+        description: "Unique security identifier — primary key of the dimension"
+
+      - name: id_type
+        type: STRING
+        nullable: true
+        source_table: product
+        description: "Primary identifier type: CUSIP, ISIN, SEDOL, TICKER, BLOOMBERG_ID"
+
+      - name: type
+        type: STRING
+        nullable: false
+        source_table: product
+        description: "Product category: EQUITY, DEBT, FUND, DERIVATIVE, RIGHT"
+
+      - name: sub_type
+        type: STRING
+        nullable: true
+        source_table: product
+        description: "Subcategory: COMMON_STOCK, PREFERRED_STOCK, BOND, MUNI, POOL_BACKED, OPTION, FUTURE, FUND, RIGHT"
+
+      - name: status
+        type: STRING
+        nullable: false
+        source_table: product
+        description: "Lifecycle status: ACTIVE, INACTIVE, MATURED, SUSPENDED, DELISTED"
+
+      - name: settlement_type
+        type: STRING
+        nullable: true
+        source_table: product
+        description: "Settlement method for the security"
+
+      - name: description
+        type: STRING
+        nullable: true
+        source_table: product
+        description: "Human-readable security name / description"
+
+      - name: issue_date
+        type: DATE
+        nullable: true
+        source_table: product
+        description: "Date the security was originally issued"
+
+      - name: issue_price
+        type: DECIMAL(28,8)
+        nullable: true
+        source_table: product
+        description: "Price at issuance"
+
+      - name: current_face_value
+        type: DECIMAL(28,8)
+        nullable: true
+        source_table: product
+        description: "Current face / par value of the security"
+
+      - name: issuer_legal_entity_id
+        type: STRING
+        nullable: true
+        source_table: product
+        description: "FK to dim_legal_entity — the issuing entity"
+
+      - name: tick_ladder_scale_id
+        type: STRING
+        nullable: true
+        source_table: product
+        description: "FK to tick_ladder_scale — minimum price increment scale"
+
+      # ── SCD2 range from Silver (current row only, end date = 9999-12-31) ────
+      - name: effective_start_date
+        type: DATE
+        nullable: false
+        source_table: product
+        description: "SCD2 effective start date for this product version"
+
+      - name: effective_end_date
+        type: DATE
+        nullable: false
+        source_table: product
+        description: "SCD2 effective end date (9999-12-31 for current row)"
+
+      # ── Denormalised issuer attributes (from legal_entity) ────────────────────
+      - name: issuer_legal_name
+        type: STRING
+        nullable: true
+        source_table: legal_entity
+        source_column: legal_name
+        description: "Legal name of the issuing entity (denormalised from legal_entity)"
+
+      - name: issuer_country
+        type: STRING
+        nullable: true
+        source_table: legal_entity
+        source_column: country
+        description: "ISO 3166-1 alpha-2 country of the issuing entity"
+
+      # ── Tick ladder attributes (from tick_ladder_scale) ──────────────────────
+      - name: tick_ladder_scale_description
+        type: STRING
+        nullable: true
+        source_table: tick_ladder_scale
+        description: "Description of the tick ladder / price increment scale"
+
+      # ── Series attributes (from series — used by stock and listed_derivative) ─
+      - name: series_id
+        type: STRING
+        nullable: true
+        source_table: stock          # also listed_derivative — coalesced
+        description: "Series grouping identifier (applicable to Stock and ListedDerivative)"
+
+      # ── Stock-specific (NULL for non-stock products) ──────────────────────────
+      - name: voting_rights
+        type: BOOLEAN
+        nullable: true
+        source_table: common_stock
+        description: "Whether the stock carries voting rights (CommonStock only)"
+
+      - name: dividend_type
+        type: STRING
+        nullable: true
+        source_table: preferred_stock
+        description: "Dividend type for preferred stock: CUMULATIVE, NON_CUMULATIVE"
+
+      # ── Debt-specific (NULL for non-debt products) ────────────────────────────
+      - name: total_amount_issued
+        type: DECIMAL(28,8)
+        nullable: true
+        source_table: debt
+        description: "Total face amount issued (Debt-level attribute)"
+
+      - name: issue_currency_code
+        type: STRING
+        nullable: true
+        source_table: debt
+        description: "ISO 4217 currency code for the debt issuance"
+
+      # ── Bond-specific (NULL for non-bond products) ────────────────────────────
+      - name: coupon_type
+        type: STRING
+        nullable: true
+        source_table: bond
+        description: "Coupon type: FIXED, FLOATING, ZERO"
+
+      - name: maturity_date
+        type: DATE
+        nullable: true
+        source_table: bond
+        description: "Date the bond matures"
+
+      - name: face_currency_code
+        type: STRING
+        nullable: true
+        source_table: bond
+        description: "ISO 4217 currency code for the bond face value"
+
+      - name: day_count_convention
+        type: STRING
+        nullable: true
+        source_table: bond
+        description: "Day count convention: ACT/360, 30/360, etc."
+
+      # ── Muni-specific (NULL for non-muni products) ────────────────────────────
+      - name: tax_exempt
+        type: BOOLEAN
+        nullable: true
+        source_table: muni
+        description: "Whether the municipal bond is tax-exempt"
+
+      - name: muni_state
+        type: STRING
+        nullable: true
+        source_table: muni
+        source_column: state
+        description: "US state of issuance for the municipal bond"
+
+      - name: muni_purpose
+        type: STRING
+        nullable: true
+        source_table: muni
+        source_column: purpose
+        description: "Purpose / project description for the municipal bond"
+
+      # ── Pool-backed-specific (NULL for non-pool products) ────────────────────
+      - name: pool_type
+        type: STRING
+        nullable: true
+        source_table: pool_backed_security
+        description: "Type of pool backing the security (e.g. MBS, ABS)"
+
+      - name: pool_originator
+        type: STRING
+        nullable: true
+        source_table: pool_backed_security
+        source_column: originator
+        description: "Originating institution for the pool-backed security"
+
+      # ── Fund-specific (NULL for non-fund products) ────────────────────────────
+      - name: endness_type
+        type: STRING
+        nullable: true
+        source_table: fund
+        description: "Fund structure: OPEN_END, CLOSED_END"
+
+      - name: mutual_fund_type
+        type: STRING
+        nullable: true
+        source_table: fund
+        description: "Mutual fund sub-classification"
+
+      # ── Right-specific (NULL for non-right products) ──────────────────────────
+      - name: subscription_ratio
+        type: DECIMAL(28,8)
+        nullable: true
+        source_table: right
+        description: "Number of new shares per right held"
+
+      # ── Listed derivative-specific (NULL for non-derivative products) ─────────
+      - name: underlying_product_id
+        type: STRING
+        nullable: true
+        source_table: listed_derivative
+        description: "FK to dim_product — the underlying security for derivatives"
+
+      # ── Option-specific (NULL for non-option products) ────────────────────────
+      - name: option_type
+        type: STRING
+        nullable: true
+        source_table: option
+        description: "Option direction: CALL or PUT"
+
+      - name: exercise_style
+        type: STRING
+        nullable: true
+        source_table: option
+        description: "Exercise convention: AMERICAN or EUROPEAN"
+
+      - name: strike_price
+        type: DECIMAL(28,8)
+        nullable: true
+        source_table: option
+        description: "Strike / exercise price of the option"
+
+      - name: expiry_date
+        type: DATE
+        nullable: true
+        source_table: option
+        description: "Option expiration date"
+
+      # ── Future-specific (NULL for non-future products) ────────────────────────
+      - name: delivery_date
+        type: DATE
+        nullable: true
+        source_table: future
+        description: "Delivery / settlement date for the futures contract"
+
+      - name: valuation_method
+        type: STRING
+        nullable: true
+        source_table: future
+        description: "Futures valuation method: MARK_TO_MARKET, etc."
+
+      # ── Pipeline metadata ─────────────────────────────────────────────────────
+      - name: _dq_rule_version
+        type: STRING
+        nullable: true
+        description: "SHA256 of silver/rules.yaml used when the source Silver row was evaluated"
+
+      - name: _ingestion_ts
+        type: TIMESTAMP
+        nullable: true
+        description: "Timestamp when the source row was loaded to Bronze"
+
+      - name: _batch_id
+        type: STRING
+        nullable: true
+        description: "Pipeline batch run identifier"
+
+    tblproperties:
+      delta.columnMapping.mode: name
+      delta.enableIcebergCompatV2: "true"
+      delta.universalFormat.enabledFormats: iceberg
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 2. dim_legal_entity
+  #    Grain: one row per legal_entity_id (current version only)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - name: dim_legal_entity
+    description: "Legal entity dimension. Grain: one row per legal_entity_id (current version). Issuers and counterparties."
+    grain: one_row_per_entity
+    source_tables:
+      - statestreet.s_statestreet.legal_entity
+    join_key: legal_entity_id
+    filter: "le.is_current = TRUE"
+    partition_by: []
+    iceberg_uniform: true
+    scd2: false
+    columns:
+      - name: legal_entity_id
+        type: STRING
+        nullable: false
+        source_table: legal_entity
+        description: "Unique legal entity identifier — primary key of the dimension"
+
+      - name: legal_name
+        type: STRING
+        nullable: false
+        source_table: legal_entity
+        description: "Full legal name of the entity"
+
+      - name: country
+        type: STRING
+        nullable: true
+        source_table: legal_entity
+        description: "ISO 3166-1 alpha-2 country code of the entity"
+
+      - name: entity_type
+        type: STRING
+        nullable: true
+        source_table: legal_entity
+        description: "Classification of entity: BANK, CORPORATE, GOVERNMENT, etc."
+
+      - name: effective_start_date
+        type: DATE
+        nullable: false
+        source_table: legal_entity
+        description: "SCD2 effective start date for this legal entity version"
+
+      - name: effective_end_date
+        type: DATE
+        nullable: false
+        source_table: legal_entity
+        description: "SCD2 effective end date (9999-12-31 for current row)"
+
+      # ── Pipeline metadata ─────────────────────────────────────────────────────
+      - name: _dq_rule_version
+        type: STRING
+        nullable: true
+        description: "SHA256 of silver/rules.yaml at DQ evaluation time"
+
+      - name: _ingestion_ts
+        type: TIMESTAMP
+        nullable: true
+        description: "Timestamp when the source row was loaded to Bronze"
+
+      - name: _batch_id
+        type: STRING
+        nullable: true
+        description: "Pipeline batch run identifier"
+
+    tblproperties:
+      delta.columnMapping.mode: name
+      delta.enableIcebergCompatV2: "true"
+      delta.universalFormat.enabledFormats: iceberg
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 3. fact_product_rating
+  #    Grain: one row per product_id × rating_date × product_rating_type_id
+  # ─────────────────────────────────────────────────────────────────────────────
+  - name: fact_product_rating
+    description: "Product rating history fact. Grain: one row per product per rating date per rating type. Enables trend analysis of credit ratings over time."
+    grain: one_row_per_product_per_rating_date
+    source_tables:
+      - statestreet.s_statestreet.product_rating
+      - statestreet.s_statestreet.product_rating_type
+      - statestreet.s_statestreet.product
+    join_key: product_id
+    filter: "pr.is_current = TRUE"
+    partition_by: [product_type]
+    iceberg_uniform: true
+    scd2: false
+    columns:
+      # ── Degenerate dimensions / natural keys ─────────────────────────────────
+      - name: product_rating_id
+        type: STRING
+        nullable: false
+        source_table: product_rating
+        description: "Surrogate PK for this rating event row"
+
+      - name: product_id
+        type: STRING
+        nullable: false
+        source_table: product_rating
+        description: "FK to dim_product — the rated security"
+
+      - name: product_rating_type_id
+        type: STRING
+        nullable: true
+        source_table: product_rating
+        description: "FK to product_rating_type — classifies the rating (e.g. Moody's, S&P)"
+
+      # ── Rating event attributes ───────────────────────────────────────────────
+      - name: rating_value
+        type: STRING
+        nullable: false
+        source_table: product_rating
+        description: "Credit rating code assigned. Examples: AAA, AA+, BBB-, BB+"
+
+      - name: effective_from_date
+        type: DATE
+        nullable: false
+        source_table: product_rating
+        description: "Date this rating became effective — part of the fact grain"
+
+      - name: rating_agency
+        type: STRING
+        nullable: true
+        source_table: product_rating
+        description: "Rating agency that issued the rating (e.g. Moody's, S&P, Fitch)"
+
+      - name: watch_code
+        type: STRING
+        nullable: true
+        source_table: product_rating
+        description: "Rating watch/outlook code: POSITIVE, NEGATIVE, STABLE, REVIEW"
+
+      - name: rating_scale
+        type: STRING
+        nullable: true
+        source_table: product_rating
+        description: "Rating scale applied (e.g. LONG_TERM, SHORT_TERM)"
+
+      # ── Rating type attributes (from product_rating_type — slowly changing ref) ─
+      - name: rating_type_code
+        type: STRING
+        nullable: true
+        source_table: product_rating_type
+        description: "Short code for the rating type"
+
+      - name: rating_type_description
+        type: STRING
+        nullable: true
+        source_table: product_rating_type
+        source_column: description
+        description: "Description of the rating type / methodology"
+
+      # ── Conformed product attributes (context for analysis) ──────────────────
+      - name: product_type
+        type: STRING
+        nullable: true
+        source_table: product
+        source_column: type
+        description: "Product type from dim_product: EQUITY, DEBT, FUND, DERIVATIVE, RIGHT"
+
+      - name: product_status
+        type: STRING
+        nullable: true
+        source_table: product
+        source_column: status
+        description: "Product lifecycle status at time of Gold build"
+
+      # ── Pipeline metadata ─────────────────────────────────────────────────────
+      - name: _dq_rule_version
+        type: STRING
+        nullable: true
+        description: "SHA256 of silver/rules.yaml at DQ evaluation time"
+
+      - name: _ingestion_ts
+        type: TIMESTAMP
+        nullable: true
+        description: "Timestamp when the source row was loaded to Bronze"
+
+      - name: _batch_id
+        type: STRING
+        nullable: true
+        description: "Pipeline batch run identifier"
+
+    tblproperties:
+      delta.columnMapping.mode: name
+      delta.enableIcebergCompatV2: "true"
+      delta.universalFormat.enabledFormats: iceberg
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 4. fact_coupon_schedule
+  #    Grain: one row per product_id (bond) × coupon payment_date × coupon_id
+  # ─────────────────────────────────────────────────────────────────────────────
+  - name: fact_coupon_schedule
+    description: "Coupon payment schedule fact. Grain: one row per bond per coupon payment date. Enables cash-flow and yield analysis across the bond portfolio."
+    grain: one_row_per_bond_per_coupon_payment_date
+    source_tables:
+      - statestreet.s_statestreet.coupon
+      - statestreet.s_statestreet.bond
+      - statestreet.s_statestreet.product
+      - statestreet.s_statestreet.debt
+    join_key: product_id
+    filter: "b.is_current = TRUE AND p.is_current = TRUE"
+    partition_by: [coupon_type]
+    iceberg_uniform: true
+    scd2: false
+    columns:
+      # ── Degenerate dimensions / natural keys ─────────────────────────────────
+      - name: coupon_id
+        type: STRING
+        nullable: false
+        source_table: coupon
+        description: "Surrogate PK for this coupon payment row"
+
+      - name: product_id
+        type: STRING
+        nullable: false
+        source_table: coupon
+        description: "FK to dim_product — the bond to which this coupon belongs"
+
+      # ── Coupon schedule attributes ────────────────────────────────────────────
+      - name: payment_date
+        type: DATE
+        nullable: false
+        source_table: coupon
+        description: "Scheduled coupon payment date — part of the fact grain"
+
+      - name: coupon_rate
+        type: DECIMAL(28,8)
+        nullable: false
+        source_table: coupon
+        description: "Annual coupon rate expressed as a percentage (e.g. 4.5 = 4.5%)"
+
+      - name: coupon_type
+        type: STRING
+        nullable: true
+        source_table: coupon
+        description: "Type of coupon payment: FIXED, FLOATING"
+
+      - name: frequency
+        type: STRING
+        nullable: true
+        source_table: coupon
+        description: "Payment frequency: ANNUAL, SEMI_ANNUAL, QUARTERLY, MONTHLY"
+
+      # ── Bond-level context (from bond — current version) ──────────────────────
+      - name: maturity_date
+        type: DATE
+        nullable: true
+        source_table: bond
+        description: "Bond maturity date — useful for remaining duration calculations"
+
+      - name: bond_coupon_type
+        type: STRING
+        nullable: true
+        source_table: bond
+        source_column: coupon_type
+        description: "Bond-level coupon classification (FIXED, FLOATING, ZERO) from the bond master"
+
+      - name: face_currency_code
+        type: STRING
+        nullable: true
+        source_table: bond
+        description: "ISO 4217 currency of the bond face / coupon payments"
+
+      - name: day_count_convention
+        type: STRING
+        nullable: true
+        source_table: bond
+        description: "Day count convention used to calculate coupon accruals"
+
+      # ── Debt-level context (from debt) ────────────────────────────────────────
+      - name: total_amount_issued
+        type: DECIMAL(28,8)
+        nullable: true
+        source_table: debt
+        description: "Total face amount issued — enables absolute coupon cash-flow calc"
+
+      - name: issue_currency_code
+        type: STRING
+        nullable: true
+        source_table: debt
+        description: "ISO 4217 currency of the debt issuance"
+
+      # ── Product-level context (from product — current version) ────────────────
+      - name: product_status
+        type: STRING
+        nullable: true
+        source_table: product
+        source_column: status
+        description: "Product lifecycle status: ACTIVE, INACTIVE, MATURED, SUSPENDED, DELISTED"
+
+      - name: issue_date
+        type: DATE
+        nullable: true
+        source_table: product
+        description: "Original issue date of the bond"
+
+      - name: issuer_legal_entity_id
+        type: STRING
+        nullable: true
+        source_table: product
+        description: "FK to dim_legal_entity — the issuing entity"
+
+      # ── Pipeline metadata ─────────────────────────────────────────────────────
+      - name: _dq_rule_version
+        type: STRING
+        nullable: true
+        description: "SHA256 of silver/rules.yaml at DQ evaluation time"
+
+      - name: _ingestion_ts
+        type: TIMESTAMP
+        nullable: true
+        description: "Timestamp when the source row was loaded to Bronze"
+
+      - name: _batch_id
+        type: STRING
+        nullable: true
+        description: "Pipeline batch run identifier"
+
+    tblproperties:
+      delta.columnMapping.mode: name
+      delta.enableIcebergCompatV2: "true"
+      delta.universalFormat.enabledFormats: iceberg
+
+```
+
+## rules.yaml
+```yaml
+
+```

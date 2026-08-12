@@ -80,13 +80,19 @@ Generate a complete Databricks notebook for the {layer} layer.
 - Output the notebook as a single code block prefixed: ### NOTEBOOK: {layer}
 """
 
-    message = client.messages.create(
+    console.print(f"[dim]  Writing {layer} notebook ({lang})...[/]")
+    output_chunks = []
+    with client.messages.stream(
         model="claude-sonnet-4-6",
         max_tokens=8192,
         messages=[{"role": "user", "content": user_prompt}],
         system=system_prompt,
-    )
-    return message.content[0].text
+    ) as stream:
+        for text in stream.text_stream:
+            print(text, end="", flush=True)
+            output_chunks.append(text)
+    print()
+    return "".join(output_chunks)
 
 
 def _write_notebook(ctx: AgentContext, layer: str, output: str):

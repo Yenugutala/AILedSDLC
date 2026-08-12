@@ -29,36 +29,60 @@ console = Console()
 PROMPT_FILE = Path(__file__).parent / "prompts" / "ba_agent.md"
 
 
+BA_SKILLS = {"data_engineering.md", "dq_patterns.md", "ontology.md", "data_dictionary.md", "schema_drift.md"}
+
+
 def run(ctx: AgentContext) -> str:
-    """Run BA Agent. Returns the full agent output as a string."""
+    """Run BA Agent. Makes 3 separate API calls (one per layer) to avoid truncation."""
     client = anthropic.Anthropic()
 
-    system_prompt = context_loader.build_system_prompt(ctx, "ba_agent")
+    filtered_ctx = AgentContext(
+        use_case_name=ctx.use_case_name,
+        claude_md=ctx.claude_md,
+        skills={k: v for k, v in ctx.skills.items() if k in BA_SKILLS},
+        request=ctx.request,
+        global_known_issues=ctx.global_known_issues,
+        use_case_known_issues=ctx.use_case_known_issues,
+        agent_state=ctx.agent_state,
+        specs=ctx.specs,
+    )
+
+    system_prompt = context_loader.build_system_prompt(filtered_ctx, "ba_agent")
     system_prompt += f"\n\n{PROMPT_FILE.read_text()}"
 
-    user_prompt = context_loader.build_user_prompt(
-        ctx,
+    base_user_prompt = context_loader.build_user_prompt(
+        filtered_ctx,
         "ba_agent",
         extra=_build_task_instruction(ctx),
     )
 
-    console.print("[dim]  Calling Claude API (BA Agent)...[/]")
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=8192,
-        messages=[{"role": "user", "content": user_prompt}],
-        system=system_prompt,
-    )
+    all_outputs = []
+    for layer in ("bronze", "silver", "gold"):
+        console.print(f"\n[dim]  Calling Claude API (BA Agent — {layer} layer)...[/]")
+        layer_prompt = (
+            base_user_prompt
+            + f"\n\n## This Call: Generate {layer.upper()} tables spec only\n"
+            f"Output ONLY this file (no rules.yaml):\n"
+            f"  ### FILE: specs/{layer}/tables.yaml\n"
+        )
+        output_chunks = []
+        with client.messages.stream(
+            model="claude-sonnet-4-6",
+            max_tokens=16000,
+            messages=[{"role": "user", "content": layer_prompt}],
+            system=system_prompt,
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                output_chunks.append(text)
+        print()
+        layer_output = "".join(output_chunks)
+        all_outputs.append(layer_output)
+        _write_spec_files(ctx, layer_output)
 
-    output = message.content[0].text
-
-    # Write spec files if agent produced YAML blocks
-    _write_spec_files(ctx, output)
-
-    # Write business requirement doc and markdown spec summaries to root folders
+    output = "\n\n".join(all_outputs)
     _write_docs(ctx)
     _write_spec_markdowns(ctx)
-
     return output
 
 
@@ -70,23 +94,19 @@ def _build_task_instruction(ctx: AgentContext) -> str:
     if iteration == 0:
         return """
 ## Your Task
-Analyze the use case request above and generate all 6 spec YAML files.
-For each file, output a clearly labeled YAML code block with the header:
-  ### FILE: specs/bronze/tables.yaml
-  ### FILE: specs/bronze/rules.yaml
-  ### FILE: specs/silver/tables.yaml
-  ### FILE: specs/silver/rules.yaml
-  ### FILE: specs/gold/tables.yaml
-  ### FILE: specs/gold/rules.yaml
+Analyze the use case request and generate the tables.yaml spec for the assigned layer.
+Output a clearly labeled YAML code block with the header:
+  ### FILE: specs/<layer>/tables.yaml
 
-After each file, briefly explain the key decisions made.
+Do NOT generate rules.yaml — only tables.yaml.
+After the file, briefly explain the key decisions made.
 
 Follow CLAUDE.md strictly:
 - Bronze schema: statestreet.b_statestreet
 - Silver schema: statestreet.s_statestreet
 - Gold schema: statestreet.g_statestreet
 - Table names: keep original CSV file names exactly
-- Gold dims: dim_<name>, Gold facts: fact_<name>
+- Gold: single wide/flat table, no dim_/fact_ prefix (e.g. securities_master)
 """
     else:
         feedback = ctx.agent_state["stages"]["ba_agent"]["history"][-1].get("feedback", "")
