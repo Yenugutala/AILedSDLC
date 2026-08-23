@@ -10,6 +10,12 @@ Usage:
     sml status   --use-case securities-master --job orchestrate_pipeline_job
     sml run      --use-case securities-master --job bronze_ingest_job
     sml validate --use-case securities-master
+
+    # Demo commands
+    sml index                          # Index codebase into ChromaDB
+    sml demo                           # Run the 6-beat live demo
+    sml ask                            # Knowledge agent REPL (audience Q&A)
+    sml change "rename column x to y"  # Propose a code change via RAG
 """
 
 import click
@@ -117,3 +123,129 @@ def validate(use_case: str):
     Run this in CI (validate-specs.yml) or locally before raising a PR.
     """
     validate_spec_agent.run(use_case_name=use_case)
+
+
+# ── Demo commands ─────────────────────────────────────────────────────────────
+
+@main.command()
+def demo():
+    """
+    Run the 6-beat AI-DLC live demo.
+
+    Shows your open Jira tickets, lets you select one, then runs:
+    Pull Ticket → Clarify → Verify → Build → Genie → Observe.
+    A live HTML dashboard auto-opens at http://localhost:8765.
+    """
+    from demo.harness import DemoHarness
+    DemoHarness().run()
+
+
+@main.command(name="index")
+def index_cmd():
+    """
+    Index the full codebase, specs, and docs into ChromaDB.
+
+    Run this once before `sml demo` to build the vector knowledge base.
+    Also auto-runs `sml schema` to refresh the live Databricks schema catalog.
+    The index is stored in .chroma/ at the repo root.
+    """
+    from demo.config import load
+    from demo.knowledge.indexer import run as index_run
+    from rich import print as rprint
+    conf = load()
+    total = index_run(repo_root=conf.repo_root, chroma_path=conf.chroma_path)
+    rprint(f"[green]  ✓ Indexed {total} chunks into {conf.chroma_path}[/]")
+
+    # Also refresh schema catalog if Databricks is configured
+    if conf.databricks_host and conf.databricks_token and getattr(conf, "databricks_warehouse_id", None):
+        rprint("[dim]  Auto-refreshing schema catalog from Databricks...[/]")
+        from agents import schema_discovery_agent
+        try:
+            n = schema_discovery_agent.run(
+                databricks_host=conf.databricks_host,
+                databricks_token=conf.databricks_token,
+                warehouse_id=conf.databricks_warehouse_id,
+                chroma_path=conf.chroma_path,
+            )
+            rprint(f"[green]  ✓ Schema catalog: {n} columns indexed[/]")
+        except Exception as e:
+            rprint(f"[yellow]  ⚠ Schema catalog skipped: {e}[/]")
+            rprint("[dim]  Run `sml schema` manually after configuring DATABRICKS_WAREHOUSE_ID[/]")
+
+
+@main.command(name="schema")
+def schema_cmd():
+    """
+    Index the live Databricks schema into ChromaDB.
+
+    Queries INFORMATION_SCHEMA.COLUMNS for the statestreet catalog and
+    builds a vector knowledge base of all columns (bronze + silver + gold).
+
+    Beat 3 Check 3 uses this catalog to:
+      - Detect if a required column already exists (action=surface)
+      - Propose new column definitions for truly new columns (action=create)
+
+    Requires .env:
+      DATABRICKS_HOST, DATABRICKS_TOKEN, DATABRICKS_WAREHOUSE_ID
+    """
+    from demo.config import load
+    from agents import schema_discovery_agent
+    from rich import print as rprint
+    conf = load()
+    warehouse_id = getattr(conf, "databricks_warehouse_id", None)
+    if not warehouse_id:
+        rprint("[red]  DATABRICKS_WAREHOUSE_ID not set in .env — cannot query INFORMATION_SCHEMA[/]")
+        raise SystemExit(1)
+    n = schema_discovery_agent.run(
+        databricks_host=conf.databricks_host,
+        databricks_token=conf.databricks_token,
+        warehouse_id=warehouse_id,
+        chroma_path=conf.chroma_path,
+    )
+    rprint(f"[green]  ✓ Schema catalog ready: {n} columns indexed from statestreet catalog[/]")
+
+
+@main.command(name="ask")
+def ask_cmd():
+    """
+    Open the knowledge agent REPL.
+
+    Ask any question about the codebase, specs, Jira tickets, or schemas.
+    The agent retrieves relevant context from ChromaDB and calls Claude.
+
+    Examples:
+      > What DQ rules apply to the bond table?
+      > change: rename column principal_amount to face_value_amount
+    """
+    from demo.config import load
+    from demo.knowledge.retriever import Retriever
+    from demo.knowledge.knowledge_agent import KnowledgeAgent, run_repl
+    from demo.tools.metrics import MetricsTracker
+    conf = load()
+    metrics = MetricsTracker()
+    retriever = Retriever(conf.chroma_path)
+    agent = KnowledgeAgent(retriever, conf.repo_root, metrics)
+    run_repl(agent)
+
+
+@main.command(name="change")
+@click.argument("instruction")
+def change_cmd(instruction: str):
+    """
+    Propose a code change across the codebase via the knowledge agent.
+
+    INSTRUCTION is a natural language description of the change, e.g.:
+      sml change "rename column principal_amount to face_value_amount"
+
+    The agent finds all affected files, generates diffs, and applies them
+    after your confirmation.
+    """
+    from demo.config import load
+    from demo.knowledge.retriever import Retriever
+    from demo.knowledge.knowledge_agent import KnowledgeAgent, _handle_change
+    from demo.tools.metrics import MetricsTracker
+    from rich.console import Console
+    conf = load()
+    metrics = MetricsTracker()
+    agent = KnowledgeAgent(Retriever(conf.chroma_path), conf.repo_root, metrics)
+    _handle_change(agent, instruction)

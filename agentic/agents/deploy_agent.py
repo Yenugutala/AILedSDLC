@@ -37,16 +37,18 @@ def deploy(use_case_name: str):
 
 
 def get_job_status(job_name: str):
-    """Print the status of the most recent job run via bundle CLI."""
-    console.print(f"[bold cyan][STATUS][/] Checking run status for: {job_name}")
-    _run(f"databricks bundle run --refresh {job_name}", cwd=REPO_ROOT)
+    """Print active and recent job runs."""
+    console.print(f"[bold cyan][STATUS][/] Active runs (job: {job_name}):")
+    _run_streaming("databricks jobs list-runs --active-only", cwd=REPO_ROOT)
+    console.print(f"[bold cyan][STATUS][/] Recent runs (last 5):")
+    _run_streaming("databricks jobs list-runs --limit 5", cwd=REPO_ROOT)
 
 
 def trigger_job(job_name: str):
-    """Trigger a Databricks job by its bundle resource key."""
+    """Trigger a Databricks job by its bundle resource key, streaming output live."""
     console.print(f"[bold cyan][RUN][/] Triggering job: {job_name}")
-    _run(f"databricks bundle run {job_name}", cwd=REPO_ROOT)
-    console.print(f"[green]Job triggered: {job_name}[/]")
+    _run_streaming(f"databricks bundle run {job_name}", cwd=REPO_ROOT)
+    console.print(f"[green]Job finished: {job_name}[/]")
 
 
 def create_pr(use_case_name: str) -> str:
@@ -151,3 +153,20 @@ def _run(cmd: str, cwd: Path):
         err = result.stderr.strip() or result.stdout.strip()
         console.print(f"[red]{err}[/]")
         raise RuntimeError(f"Command failed: {cmd}\n{err}")
+
+
+def _run_streaming(cmd: str, cwd: Path):
+    """Run a command and stream stdout/stderr to console in real time."""
+    process = subprocess.Popen(
+        cmd.split(),
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    for line in process.stdout:
+        print(line, end="", flush=True)
+    process.wait()
+    if process.returncode != 0:
+        raise RuntimeError(f"Command failed: {cmd}")

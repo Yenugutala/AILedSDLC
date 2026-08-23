@@ -283,6 +283,82 @@ in `databricks.yml`. DQ reporting is handled inline in `04_silver_conform.sql`.
 
 ---
 
+## ISSUE-021: BA Agent truncates after bronze or silver — gold spec never written
+
+**Symptom**: `sml generate` completes but only `specs/bronze/tables.yaml` (or bronze + silver)
+are written. Gold specs are missing.
+
+**Cause**: All 6 spec files were generated in a single API call with `max_tokens=8192` (later 16000).
+The full output exceeds the token budget before gold specs are produced, so they are silently
+dropped by the parser.
+
+**Fix (already applied)**: BA Agent now makes 3 separate API calls — one per layer
+(bronze → silver → gold), each with `max_tokens=16000`. Skills context is filtered to only
+the 5 relevant files (`data_engineering.md`, `dq_patterns.md`, `ontology.md`,
+`data_dictionary.md`, `schema_drift.md`) to reduce input token usage.
+
+---
+
+## ISSUE-022: `ValueError: Streaming is required` for large max_tokens requests
+
+**Symptom**: `sml generate` fails immediately after "Calling Claude API" with:
+```
+ValueError: Streaming is required for operations that may take longer than 10 minutes.
+See https://github.com/anthropics/anthropic-sdk-python#long-requests for more details
+```
+
+**Cause**: The Anthropic Python SDK enforces streaming for any request where `max_tokens`
+is large enough that the response could exceed 10 minutes of generation time.
+
+**Fix (already applied)**: All agent API calls now use `client.messages.stream()` with
+`stream.text_stream` iteration instead of `client.messages.create()`. This also provides
+real-time streaming output to the console.
+
+---
+
+## ISSUE-023: `.venv` breaks after project folder rename
+
+**Symptom**: After renaming the project folder (e.g. `StateStreetDemo` → `AILedSDLC`),
+running `sml generate` fails with:
+```
+(eval):1: .venv/bin/pip: bad interpreter: /Users/.../StateStreetDemo/.venv/bin/python3: no such file or directory
+zsh: command not found: sml
+```
+
+**Cause**: Python virtual environments embed absolute paths to their interpreter at creation time.
+Renaming the parent folder breaks all symlinks and shebangs inside `.venv/bin/`.
+
+**Fix**: Delete and recreate the virtual environment from the new path:
+```bash
+cd /path/to/AILedSDLC
+rm -rf .venv
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e agentic/
+```
+
+---
+
+## ISSUE-024: Old pip (≤21) cannot install `pyproject.toml`-only packages in editable mode
+
+**Symptom**: `pip install -e agentic/` fails with:
+```
+ERROR: File "setup.py" or "setup.cfg" not found. Directory cannot be installed in editable mode:
+(A "pyproject.toml" file was found, but editable mode currently requires a setuptools-based build.)
+```
+
+**Cause**: pip 21.x does not support PEP 660 (editable installs via `pyproject.toml` without
+`setup.py`). macOS system Python ships with this old pip version.
+
+**Fix**: Upgrade pip before installing:
+```bash
+pip install --upgrade pip
+pip install -e agentic/
+```
+
+---
+
 ## ISSUE-020: databricks.yml — hardcoded `job_clusters` blocks caused serverless conflicts
 
 **Symptom**: Jobs failed to start, or Databricks showed cluster provisioning errors when

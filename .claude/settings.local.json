@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(databricks bundle validate)"
+      "Bash(databricks bundle validate)",
+      "Bash(source ../.venv/bin/activate)",
+      "Bash(python3 -c \":*)",
+      "mcp__atlassian__jira_get_user_profile"
     ]
   }
 }

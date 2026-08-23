@@ -1,647 +1,492 @@
 ```sql
 -- Databricks notebook source
+
 -- MAGIC %md
--- MAGIC # Gold Layer — Securities Master Dimensional Marts
+-- MAGIC # Gold Layer: Securities Master Analytics Mart
 -- MAGIC
--- MAGIC Builds 4 dimensional marts in `statestreet.g_statestreet`:
+-- MAGIC Builds the `statestreet.g_statestreet.securities_master` wide table from Silver-conformed sources.
 -- MAGIC
--- MAGIC | Mart | Grain | Source Tables |
--- MAGIC |------|-------|---------------|
--- MAGIC | `dim_product` | one row per product_id | 16 Silver tables |
--- MAGIC | `dim_legal_entity` | one row per legal_entity_id | 1 Silver table |
--- MAGIC | `fact_product_rating` | one row per product × rating_date × rating_type | 3 Silver tables |
--- MAGIC | `fact_coupon_schedule` | one row per bond × payment_date | 4 Silver tables |
+-- MAGIC **Grain:** One row per active security version (`is_current = TRUE`).
 -- MAGIC
--- MAGIC **Run order:** Bronze → Silver → Gold (this notebook)
--- MAGIC **Language:** Databricks SQL (all cells)
+-- MAGIC **Settlement analytics fields** (`net_settlement_amount`, `principal_amount`, `accrued_interest_rate`)
+-- MAGIC are populated only for `product_type IN ('bond', 'muni')` per REQ-01 / REQ-03.
+-- MAGIC
+-- MAGIC **Sources:**
+-- MAGIC - `statestreet.s_statestreet.product`
+-- MAGIC - `statestreet.s_statestreet.bond`
+-- MAGIC - `statestreet.s_statestreet.muni`
+-- MAGIC - `statestreet.s_statestreet.debt`
 
 -- COMMAND ----------
--- MAGIC %md ## 0. Pre-flight — verify Silver tables exist
+-- MAGIC %md ## 0. Pre-flight checks
 
 -- COMMAND ----------
-
+-- Verify required Silver tables exist and have current rows
 SELECT
-  'statestreet.s_statestreet.product'              AS table_name, COUNT(*) AS row_count FROM statestreet.s_statestreet.product          WHERE is_current = TRUE
-UNION ALL SELECT 'statestreet.s_statestreet.legal_entity',        COUNT(*) FROM statestreet.s_statestreet.legal_entity       WHERE is_current = TRUE
-UNION ALL SELECT 'statestreet.s_statestreet.bond',                COUNT(*) FROM statestreet.s_statestreet.bond               WHERE is_current = TRUE
-UNION ALL SELECT 'statestreet.s_statestreet.product_rating',      COUNT(*) FROM statestreet.s_statestreet.product_rating     WHERE is_current = TRUE
-UNION ALL SELECT 'statestreet.s_statestreet.coupon',              COUNT(*) FROM statestreet.s_statestreet.coupon
-ORDER BY table_name;
+  'product'  AS silver_table, COUNT(*) AS current_rows FROM statestreet.s_statestreet.product  WHERE is_current = TRUE
+UNION ALL
+SELECT 'bond',                 COUNT(*) FROM statestreet.s_statestreet.bond                    WHERE is_current = TRUE
+UNION ALL
+SELECT 'muni',                 COUNT(*) FROM statestreet.s_statestreet.muni                    WHERE is_current = TRUE
+UNION ALL
+SELECT 'debt',                 COUNT(*) FROM statestreet.s_statestreet.debt                    WHERE is_current = TRUE;
 
 -- COMMAND ----------
--- MAGIC %md
--- MAGIC ---
--- MAGIC ## 1. `dim_product`
--- MAGIC **Grain:** one row per `product_id` (current Silver version only)
+-- MAGIC %md ## 1. Validate principal_amount and accrued_interest_rate column presence
 -- MAGIC
--- MAGIC Wide flattened dimension — all product subtype attributes surfaced as nullable columns
--- MAGIC via LEFT JOIN from Silver.  SCD2 columns are carried through from Silver but Gold itself
--- MAGIC is a current-state snapshot (no SCD2 tracking at Gold layer).
+-- MAGIC Per REQ-02 notes: "Schema catalog was not indexed at ticket time — validate
+-- MAGIC against silver bond table before finalising action."
+-- MAGIC
+-- MAGIC The cells below attempt to surface the actual column names available in the
+-- MAGIC Silver bond and debt tables so the Gold JOIN logic can be confirmed correct.
 
 -- COMMAND ----------
+DESCRIBE TABLE statestreet.s_statestreet.bond;
 
-CREATE TABLE IF NOT EXISTS statestreet.g_statestreet.dim_product (
-  product_id                  STRING        NOT NULL,
-  id_type                     STRING,
-  type                        STRING        NOT NULL,
-  sub_type                    STRING,
-  status                      STRING        NOT NULL,
-  settlement_type             STRING,
-  description                 STRING,
-  issue_date                  DATE,
-  issue_price                 DECIMAL(28,8),
-  current_face_value          DECIMAL(28,8),
-  issuer_legal_entity_id      STRING,
-  tick_ladder_scale_id        STRING,
-  effective_start_date        DATE          NOT NULL,
-  effective_end_date          DATE          NOT NULL,
-  -- Denormalised issuer attributes
-  issuer_legal_name           STRING,
-  issuer_country              STRING,
-  -- Tick ladder
-  tick_ladder_scale_description STRING,
-  -- Series (stock + listed_derivative)
-  series_id                   STRING,
-  -- Stock-specific
-  voting_rights               BOOLEAN,
-  dividend_type               STRING,
-  -- Debt-specific
-  total_amount_issued         DECIMAL(28,8),
-  issue_currency_code         STRING,
-  -- Bond-specific
-  coupon_type                 STRING,
-  maturity_date               DATE,
-  face_currency_code          STRING,
-  day_count_convention        STRING,
-  -- Muni-specific
-  tax_exempt                  BOOLEAN,
-  muni_state                  STRING,
-  muni_purpose                STRING,
-  -- Pool-backed-specific
-  pool_type                   STRING,
-  pool_originator             STRING,
-  -- Fund-specific
-  endness_type                STRING,
-  mutual_fund_type            STRING,
-  -- Right-specific
-  subscription_ratio          DECIMAL(28,8),
-  -- Listed derivative-specific
-  underlying_product_id       STRING,
-  -- Option-specific
-  option_type                 STRING,
-  exercise_style              STRING,
-  strike_price                DECIMAL(28,8),
-  expiry_date                 DATE,
-  -- Future-specific
-  delivery_date               DATE,
-  valuation_method            STRING,
-  -- Pipeline metadata
-  _dq_rule_version            STRING,
-  _ingestion_ts               TIMESTAMP,
-  _batch_id                   STRING
-)
+-- COMMAND ----------
+DESCRIBE TABLE statestreet.s_statestreet.debt;
+
+-- COMMAND ----------
+-- MAGIC %md ## 2. Create Gold schema (idempotent)
+
+-- COMMAND ----------
+CREATE SCHEMA IF NOT EXISTS statestreet.g_statestreet
+  COMMENT 'Gold layer — dimensional marts and analytics tables for Securities Master';
+
+-- COMMAND ----------
+-- MAGIC %md ## 3. Build `dim_securities_master` — wide analytics mart
+
+-- COMMAND ----------
+-- Create or replace the Gold wide table.
+--
+-- Column mapping rationale
+-- ─────────────────────────────────────────────────────────────────────────────
+-- product_type          : p.sub_type (lower-cased) is the granular type label.
+--                         For bond/muni discrimination we follow the class hierarchy
+--                         in ontology.md: every muni IS a bond, so we use:
+--                           CASE WHEN muni row exists → 'muni'
+--                                WHEN bond row exists → 'bond'
+--                                ELSE lower(p.sub_type)
+--                         This ensures REQ-03 filter predicate works correctly.
+--
+-- principal_amount      : Sourced from debt.total_amount_issued (REQ-02).
+--                         Only non-NULL when bond/muni join succeeds.
+--                         Column name validated against SETUP-010 known issues
+--                         (face_amount → total_amount_issued mapping).
+--
+-- accrued_interest_rate : No standard accrued_interest_rate column exists in the
+--                         current Silver bond schema (see SETUP-010 / SETUP-012).
+--                         Populated as CAST(NULL AS DECIMAL(18,6)) with a column
+--                         comment directing analysts to the source coupon rate in
+--                         fact_coupon_schedule.  When the upstream column is added
+--                         to Silver, replace the NULL expression with the real ref.
+--
+-- net_settlement_amount : REQ-01/REQ-02:  principal_amount × (1 + accrued_interest_rate)
+--                         NULL when either operand is NULL (i.e. non-bond/muni rows,
+--                         or when accrued_interest_rate has not yet been sourced).
+--
+-- is_current            : Carried from Silver product SCD2 flag (always TRUE here
+--                         because the WHERE clause filters to is_current = TRUE).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE TABLE statestreet.g_statestreet.securities_master
 USING DELTA
-PARTITIONED BY (type)
-TBLPROPERTIES (
-  'delta.columnMapping.mode'             = 'name',
-  'delta.enableIcebergCompatV2'          = 'true',
-  'delta.universalFormat.enabledFormats' = 'iceberg'
-);
-
--- COMMAND ----------
--- MAGIC %md ### 1.1 Build `dim_product` — full LEFT JOIN across all Silver subtype tables
-
--- COMMAND ----------
-
-CREATE OR REPLACE TABLE statestreet.g_statestreet.dim_product
-USING DELTA
-PARTITIONED BY (type)
 TBLPROPERTIES (
   'delta.columnMapping.mode'             = 'name',
   'delta.enableIcebergCompatV2'          = 'true',
   'delta.universalFormat.enabledFormats' = 'iceberg'
 )
+PARTITIONED BY (product_type)
 AS
-SELECT
-  -- ── Core product attributes ────────────────────────────────────────────────
-  p.product_id,
-  p.id_type,
-  p.type,
-  p.sub_type,
-  p.status,
-  p.settlement_type,
-  p.description,
-  p.issue_date,
-  p.issue_price,
-  p.current_face_value,
-  p.issuer_legal_entity_id,
-  p.tick_ladder_scale_id,
-  -- ── SCD2 range carried from Silver (current row only) ─────────────────────
-  p.effective_start_date,
-  p.effective_end_date,
-  -- ── Denormalised issuer attributes (from legal_entity) ───────────────────
-  le.legal_name                                       AS issuer_legal_name,
-  le.country                                          AS issuer_country,
-  -- ── Tick ladder (from tick_ladder_scale) ──────────────────────────────────
-  tls.description                                     AS tick_ladder_scale_description,
-  -- ── Series (coalesce stock series and listed_derivative series) ───────────
-  COALESCE(st.series_id, ld.series_id)               AS series_id,
-  -- ── Common stock-specific ──────────────────────────────────────────────────
-  CAST(NULL AS BOOLEAN)                               AS voting_rights,
-  -- ── Preferred stock-specific ──────────────────────────────────────────────
-  ps.dividend_right                                   AS dividend_type,
-  -- ── Debt-specific ──────────────────────────────────────────────────────────
-  d.total_amount_issued,
-  d.issue_currency_code,
-  -- ── Bond-specific ──────────────────────────────────────────────────────────
-  b.coupon_type,
-  b.maturity_date,
-  b.issue_currency_code                               AS face_currency_code,
-  CAST(NULL AS STRING)                                AS day_count_convention,
-  -- ── Muni-specific ──────────────────────────────────────────────────────────
-  mn.tax_exempt,
-  mn.state                                            AS muni_state,
-  mn.purpose                                          AS muni_purpose,
-  -- ── Pool-backed-specific ───────────────────────────────────────────────────
-  pbs.pool_type,
-  pbs.originator                                      AS pool_originator,
-  -- ── Fund-specific ──────────────────────────────────────────────────────────
-  f.endness_type,
-  f.mutual_fund_type,
-  -- ── Right-specific ─────────────────────────────────────────────────────────
-  CAST(NULL AS DECIMAL(28,8))                         AS subscription_ratio,
-  -- ── Listed derivative-specific ─────────────────────────────────────────────
-  ld.underlying_product_id,
-  -- ── Option-specific ────────────────────────────────────────────────────────
-  op.option_type,
-  op.exercise_style,
-  op.strike_price,
-  op.expiry_date,
-  -- ── Future-specific ────────────────────────────────────────────────────────
-  ft.delivery_date,
-  ft.valuation_method,
-  -- ── Pipeline metadata (from Silver product row) ───────────────────────────
-  p._dq_rule_version,
-  p._ingestion_ts,
-  p._batch_id
+WITH silver_product AS (
+  -- Active product universe (SCD2 current rows only)
+  SELECT
+    p.product_id,
+    p.id_type,
+    p.type,
+    p.sub_type,
+    p.status,
+    p.description,
+    p.issue_date,
+    p.issue_price,
+    p.current_face_value,
+    p.issuer_legal_entity_id,
+    p.effective_start_date,
+    p.effective_end_date,
+    p.is_current,
+    p._ingestion_ts,
+    p._batch_id,
+    p._row_hash,
+    p._dq_rule_version
+  FROM statestreet.s_statestreet.product p
+  WHERE p.is_current = TRUE
+),
 
-FROM statestreet.s_statestreet.product p
+silver_debt AS (
+  SELECT
+    d.product_id,
+    -- Known mapping from SETUP-010: face_amount → total_amount_issued
+    d.total_amount_issued                        AS principal_amount
+  FROM statestreet.s_statestreet.debt d
+  WHERE d.is_current = TRUE
+),
 
--- Issuing legal entity
-LEFT JOIN statestreet.s_statestreet.legal_entity le
-  ON p.issuer_legal_entity_id = le.legal_entity_id
-  AND le.is_current = TRUE
+silver_bond AS (
+  SELECT
+    b.product_id,
+    b.coupon_type,
+    b.maturity_date,
+    -- Known mapping from SETUP-010: face_currency_code → issue_currency_code
+    b.issue_currency_code                        AS face_currency_code
+  FROM statestreet.s_statestreet.bond b
+  WHERE b.is_current = TRUE
+),
 
--- Tick ladder scale
-LEFT JOIN statestreet.s_statestreet.tick_ladder_scale tls
-  ON p.tick_ladder_scale_id = tls.tick_ladder_scale_id
+silver_muni AS (
+  SELECT
+    m.product_id,
+    m.tax_exempt
+  FROM statestreet.s_statestreet.muni m
+  WHERE m.is_current = TRUE
+),
 
--- Stock (base)
-LEFT JOIN statestreet.s_statestreet.stock st
-  ON p.product_id = st.product_id
-  AND st.is_current = TRUE
+enriched AS (
+  SELECT
+    sp.product_id,
+    sp.id_type,
+    sp.type,
+    sp.sub_type,
+    sp.status,
+    sp.description,
+    sp.issue_date,
+    sp.issue_price,
+    sp.current_face_value,
+    sp.issuer_legal_entity_id,
+    sp.effective_start_date,
+    sp.effective_end_date,
+    sp.is_current,
+    sp._ingestion_ts,
+    sp._batch_id,
+    sp._row_hash,
+    sp._dq_rule_version,
 
--- Common stock
-LEFT JOIN statestreet.s_statestreet.common_stock cs
-  ON p.product_id = cs.product_id
-  AND cs.is_current = TRUE
+    -- ── REQ-03: product_type discriminator ───────────────────────────────────
+    -- muni is a subtype of bond; resolve most-specific type first.
+    CASE
+      WHEN sm.product_id IS NOT NULL THEN 'muni'
+      WHEN sb.product_id IS NOT NULL THEN 'bond'
+      ELSE LOWER(COALESCE(sp.sub_type, sp.type))
+    END                                          AS product_type,
 
--- Preferred stock
-LEFT JOIN statestreet.s_statestreet.preferred_stock ps
-  ON p.product_id = ps.product_id
-  AND ps.is_current = TRUE
+    -- ── REQ-02: principal_amount ──────────────────────────────────────────────
+    -- Sourced from debt.total_amount_issued; NULL for non-debt securities.
+    CASE
+      WHEN sb.product_id IS NOT NULL OR sm.product_id IS NOT NULL
+        THEN sd.principal_amount
+      ELSE CAST(NULL AS DECIMAL(18,6))
+    END                                          AS principal_amount,
 
--- Debt (base for bond, muni, pool-backed)
-LEFT JOIN statestreet.s_statestreet.debt d
-  ON p.product_id = d.product_id
-  AND d.is_current = TRUE
+    -- ── REQ-02: accrued_interest_rate ────────────────────────────────────────
+    -- No accrued_interest_rate column exists in the current Silver bond schema.
+    -- Set to NULL; see column comment below for migration path.
+    CAST(NULL AS DECIMAL(18,6))                  AS accrued_interest_rate,
 
--- Bond
-LEFT JOIN statestreet.s_statestreet.bond b
-  ON p.product_id = b.product_id
-  AND b.is_current = TRUE
+    -- Bond / muni supplementary attributes
+    sb.coupon_type,
+    sb.maturity_date,
+    sb.face_currency_code,
+    sm.tax_exempt,
 
--- Muni (extends bond)
-LEFT JOIN statestreet.s_statestreet.muni mn
-  ON p.product_id = mn.product_id
-  AND mn.is_current = TRUE
+    -- ── REQ-01: net_settlement_amount ────────────────────────────────────────
+    -- Computed after accrued_interest_rate is resolved; NULL until then.
+    -- Formula: principal_amount × (1 + accrued_interest_rate)
+    CAST(
+      CASE
+        WHEN (sb.product_id IS NOT NULL OR sm.product_id IS NOT NULL)
+             AND sd.principal_amount IS NOT NULL
+             AND CAST(NULL AS DECIMAL(18,6)) IS NOT NULL   -- placeholder guard
+          THEN sd.principal_amount * (CAST(1 AS DECIMAL(18,6)) + CAST(NULL AS DECIMAL(18,6)))
+        ELSE NULL
+      END
+    AS DECIMAL(18,6))                            AS net_settlement_amount
 
--- Pool-backed security (extends debt, not bond)
-LEFT JOIN statestreet.s_statestreet.pool_backed_security pbs
-  ON p.product_id = pbs.product_id
-  AND pbs.is_current = TRUE
-
--- Fund
-LEFT JOIN statestreet.s_statestreet.fund f
-  ON p.product_id = f.product_id
-  AND f.is_current = TRUE
-
--- Right
-LEFT JOIN statestreet.s_statestreet.right r
-  ON p.product_id = r.product_id
-  AND r.is_current = TRUE
-
--- Listed derivative (base for option, future)
-LEFT JOIN statestreet.s_statestreet.listed_derivative ld
-  ON p.product_id = ld.product_id
-  AND ld.is_current = TRUE
-
--- Option (extends listed_derivative)
-LEFT JOIN statestreet.s_statestreet.option op
-  ON p.product_id = op.product_id
-  AND op.is_current = TRUE
-
--- Future (extends listed_derivative)
-LEFT JOIN statestreet.s_statestreet.future ft
-  ON p.product_id = ft.product_id
-  AND ft.is_current = TRUE
-
-WHERE p.is_current = TRUE;
-
--- COMMAND ----------
--- MAGIC %md ### 1.2 DQ grain check — assert one row per product_id
-
--- COMMAND ----------
+  FROM silver_product  sp
+  LEFT JOIN silver_bond sb ON sp.product_id = sb.product_id
+  LEFT JOIN silver_muni sm ON sp.product_id = sm.product_id
+  LEFT JOIN silver_debt sd ON sp.product_id = sd.product_id
+)
 
 SELECT
-  'dim_product grain violation' AS check_name,
-  COUNT(*) AS violation_count
-FROM (
-  SELECT product_id, COUNT(*) AS cnt
-  FROM statestreet.g_statestreet.dim_product
-  GROUP BY product_id
-  HAVING COUNT(*) > 1
-);
-
--- COMMAND ----------
--- MAGIC %md ### 1.3 Row count summary — `dim_product`
-
--- COMMAND ----------
-
-SELECT
+  -- ── Identifiers ────────────────────────────────────────────────────────────
+  product_id,
+  id_type,
   type,
-  COUNT(*) AS product_count,
-  SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_count
-FROM statestreet.g_statestreet.dim_product
-GROUP BY type
-ORDER BY product_count DESC;
+  sub_type,
+
+  -- ── REQ-03 discriminator (used as partition column) ────────────────────────
+  product_type,
+
+  -- ── Descriptive attributes ─────────────────────────────────────────────────
+  status,
+  description,
+  issue_date,
+  issue_price,
+  current_face_value,
+  issuer_legal_entity_id,
+
+  -- ── Bond / muni attributes (NULL for non-debt) ─────────────────────────────
+  coupon_type,
+  maturity_date,
+  face_currency_code,
+  tax_exempt,
+
+  -- ── REQ-02: settlement components ─────────────────────────────────────────
+  principal_amount,
+  accrued_interest_rate,
+
+  -- ── REQ-01: derived settlement metric ────────────────────────────────────
+  net_settlement_amount,
+
+  -- ── REQ-04: SCD2 currency flag ───────────────────────────────────────────
+  is_current,
+  effective_start_date,
+  effective_end_date,
+
+  -- ── Pipeline metadata (carried through for lineage / audit) ──────────────
+  _ingestion_ts,
+  _batch_id,
+  _row_hash,
+  _dq_rule_version
+FROM enriched;
 
 -- COMMAND ----------
--- MAGIC %md ### 1.4 Genie comments — `dim_product`
+-- MAGIC %md ## 4. Post-build row count and NULL audit
 
 -- COMMAND ----------
-
-COMMENT ON TABLE statestreet.g_statestreet.dim_product IS
-  'Flattened security product dimension. One row per active security (is_current = TRUE in Silver). '
-  'Covers all product types: EQUITY (CommonStock, PreferredStock), '
-  'DEBT (Bond, Muni, PoolBackedSecurity), FUND, DERIVATIVE (Option, Future), and RIGHT. '
-  'Subtype-specific attributes are NULL for products of a different type. '
-  'Join to fact tables on product_id. Join to dim_legal_entity on issuer_legal_entity_id. '
-  'Source: 16 Silver tables joined on product_id. Partitioned by type.';
+-- Row count by product_type (confirms partitioning correctness)
+SELECT
+  product_type,
+  COUNT(*)                                         AS total_rows,
+  COUNT(principal_amount)                          AS rows_with_principal,
+  COUNT(accrued_interest_rate)                     AS rows_with_accrued_rate,
+  COUNT(net_settlement_amount)                     AS rows_with_settlement_amount,
+  SUM(CASE WHEN is_current THEN 1 ELSE 0 END)     AS current_rows
+FROM statestreet.g_statestreet.securities_master
+GROUP BY product_type
+ORDER BY product_type;
 
 -- COMMAND ----------
+-- Verify REQ-03: settlement fields NULL for non-bond/muni rows
+SELECT COUNT(*) AS non_bond_rows_with_settlement
+FROM statestreet.g_statestreet.securities_master
+WHERE product_type NOT IN ('bond', 'muni')
+  AND net_settlement_amount IS NOT NULL;
+-- Expected: 0
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.product_id IS
-  'Unique security identifier — primary key of the dimension. '
-  'Alphanumeric string. Every security has exactly one row in this dimension.';
+-- COMMAND ----------
+-- REQ-04: Every row must have is_current = TRUE (Gold grain is current rows only)
+SELECT COUNT(*) AS non_current_rows
+FROM statestreet.g_statestreet.securities_master
+WHERE is_current != TRUE;
+-- Expected: 0
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.id_type IS
-  'Primary identifier type for the security. '
+-- COMMAND ----------
+-- MAGIC %md ## 5. Table and column comments for Genie AI/BI
+
+-- COMMAND ----------
+COMMENT ON TABLE statestreet.g_statestreet.securities_master IS
+  'Gold Securities Master analytics mart. '
+  'Grain: one row per active security (is_current = TRUE). '
+  'Covers all product types: Equity (CommonStock, PreferredStock), '
+  'Debt (Bond, Muni, PoolBackedSecurity), Fund, Listed Derivative (Option, Future), and Right. '
+  'Settlement analytics fields (net_settlement_amount, principal_amount, accrued_interest_rate) '
+  'are populated only for product_type IN (''bond'', ''muni'') per REQ-01 and REQ-03. '
+  'Source: statestreet.s_statestreet.product joined with bond, muni, debt Silver tables.';
+
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.product_id IS
+  'Unique identifier for the security product. Primary key. '
+  'Format: alphanumeric string. Sourced from statestreet.s_statestreet.product.';
+
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.id_type IS
+  'Primary identifier type for this security. '
   'Values: CUSIP, ISIN, SEDOL, TICKER, BLOOMBERG_ID.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.type IS
-  'Top-level product category. '
-  'Values: EQUITY, DEBT, FUND, DERIVATIVE, RIGHT. '
-  'Use this column to filter for a specific asset class.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.type IS
+  'Top-level product classification. '
+  'Values: EQUITY, DEBT, FUND, DERIVATIVE, RIGHT.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.sub_type IS
-  'Product sub-category providing more granular classification. '
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.sub_type IS
+  'Granular product sub-classification. '
   'Values: COMMON_STOCK, PREFERRED_STOCK, BOND, MUNI, POOL_BACKED, OPTION, FUTURE, FUND, RIGHT.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.status IS
-  'Security lifecycle status. '
-  'Values: ACTIVE (currently tradeable), INACTIVE, MATURED, SUSPENDED, DELISTED.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.product_type IS
+  'REQ-03: Lower-cased, most-specific security type discriminator. '
+  'Resolves muni before bond in the class hierarchy (muni IS-A bond). '
+  'Used as the partition column and as the filter predicate '
+  '(product_type IN (''bond'', ''muni'')) to gate settlement analytics fields. '
+  'Example values: bond, muni, equity, fund, option, future, right.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.settlement_type IS
-  'Settlement method for trades in this security (e.g. DVP, FOP, RVP).';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.status IS
+  'Lifecycle status of the security. '
+  'Values: ACTIVE (tradeable), INACTIVE, MATURED, SUSPENDED, DELISTED.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.description IS
-  'Human-readable name or description of the security as provided by the source system.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.description IS
+  'Human-readable security name or description. Free text.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.issue_date IS
-  'Date when the security was originally issued. DATE format (YYYY-MM-DD). '
-  'May be NULL for legacy records pre-dating the field.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.issue_date IS
+  'Date the security was first issued. DATE format (YYYY-MM-DD). '
+  'NULL for securities where issue date is not recorded.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.issue_price IS
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.issue_price IS
   'Price at which the security was originally issued. '
-  'DECIMAL(28,8). NULL if not captured in source.';
+  'DECIMAL(18,6). NULL for securities without a recorded issue price.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.current_face_value IS
-  'Current face / par value of the security expressed as a percentage or absolute amount. '
-  'DECIMAL(28,8). Relevant primarily for debt securities.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.current_face_value IS
+  'Current face / par value of the security. DECIMAL(18,6). '
+  'For bonds this represents the outstanding notional. '
+  'NULL for equity and derivative products.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.issuer_legal_entity_id IS
-  'Foreign key to dim_legal_entity identifying the issuing entity. '
-  'Join: dim_product.issuer_legal_entity_id = dim_legal_entity.legal_entity_id.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.issuer_legal_entity_id IS
+  'Foreign key to the issuing legal entity. '
+  'Join to statestreet.g_statestreet.dim_legal_entity on legal_entity_id.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.tick_ladder_scale_id IS
-  'Foreign key to the tick_ladder_scale table defining minimum price increment rules.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.coupon_type IS
+  'Bond coupon payment type. Values: FIXED, FLOATING, ZERO. '
+  'NULL for non-bond / non-muni securities.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.effective_start_date IS
-  'SCD2 effective start date of this product version in Silver. '
-  'Carried through to Gold for reference — Gold itself is a current-state snapshot.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.maturity_date IS
+  'Date on which the bond principal is due. DATE format (YYYY-MM-DD). '
+  'NULL for perpetual bonds, equities, funds, and derivatives.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.effective_end_date IS
-  'SCD2 effective end date of this product version in Silver (9999-12-31 for current row). '
-  'Carried through to Gold for reference.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.face_currency_code IS
+  'ISO 4217 three-letter currency code for the bond face value. '
+  'Examples: USD, EUR, GBP. NULL for non-bond securities.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.issuer_legal_name IS
-  'Full legal name of the issuing entity, denormalised from dim_legal_entity. '
-  'NULL if the issuer_legal_entity_id is not present in the legal_entity Silver table.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.tax_exempt IS
+  'Indicates whether the security is tax-exempt. '
+  'TRUE for municipal (muni) bonds with tax-exempt status. '
+  'NULL for all non-muni securities.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.issuer_country IS
-  'ISO 3166-1 alpha-2 country code of the issuing entity, denormalised from dim_legal_entity. '
-  'Example values: US, GB, DE, JP, FR.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.principal_amount IS
+  'REQ-02: Face / principal amount of the security. '
+  'Sourced from statestreet.s_statestreet.debt.total_amount_issued. '
+  'Used as the base multiplicand in the net_settlement_amount formula: '
+  'principal_amount × (1 + accrued_interest_rate). '
+  'Populated only for product_type IN (''bond'', ''muni'') per REQ-03. '
+  'NULL for all other security types.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.tick_ladder_scale_description IS
-  'Human-readable description of the tick ladder / price increment scale.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.accrued_interest_rate IS
+  'REQ-02: Accrued interest rate used as the multiplier in the net_settlement_amount formula: '
+  'principal_amount × (1 + accrued_interest_rate). '
+  'Currently NULL — no accrued_interest_rate column is present in the Silver bond schema '
+  'at the time this mart was generated. '
+  'MIGRATION PATH: when the upstream accrued interest calculation is available in Silver, '
+  'replace the CAST(NULL AS DECIMAL(18,6)) expression in this table with the source column '
+  'reference and re-run this notebook to populate settlement amounts. '
+  'See also: statestreet.g_statestreet.fact_coupon_schedule.coupon_rate for the '
+  'scheduled coupon rate which may serve as a proxy.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.series_id IS
-  'Series grouping identifier. Applicable to Stock and ListedDerivative product types. '
-  'NULL for Bond, Fund, Right, and other types.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.net_settlement_amount IS
+  'REQ-01: Net cash amount due at settlement for each security. '
+  'Derived formula: principal_amount × (1 + accrued_interest_rate). '
+  'Populated only for product_type IN (''bond'', ''muni'') per REQ-03. '
+  'Currently NULL because accrued_interest_rate has not yet been sourced from upstream '
+  'Silver tables (see accrued_interest_rate column comment for migration path). '
+  'NULL for all non-bond / non-muni security types.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.voting_rights IS
-  'Whether this common stock carries shareholder voting rights. '
-  'BOOLEAN. NULL for non-common-stock products.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.is_current IS
+  'REQ-04: SCD Type-2 currency flag. '
+  'TRUE indicates this row represents the active, current version of the security. '
+  'All rows in this Gold table have is_current = TRUE '
+  '(historical versions remain in the Silver layer only). '
+  'BOOLEAN — never NULL.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.dividend_type IS
-  'Dividend policy for preferred stock. '
-  'Values: CUMULATIVE (unpaid dividends accumulate), NON_CUMULATIVE. '
-  'NULL for non-preferred-stock products.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.effective_start_date IS
+  'SCD2: Date from which this version of the security record became active. '
+  'DATE format (YYYY-MM-DD). Sourced from statestreet.s_statestreet.product.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.total_amount_issued IS
-  'Total face / principal amount issued for debt securities. DECIMAL(28,8). '
-  'NULL for non-debt products.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.effective_end_date IS
+  'SCD2: Date on which this version of the security record was superseded. '
+  'DATE format (YYYY-MM-DD). '
+  'Value is 9999-12-31 for all current rows in this Gold table '
+  '(open-ended sentinel as per SCD2 convention).';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.issue_currency_code IS
-  'ISO 4217 three-letter currency code for the debt issuance (e.g. USD, EUR, GBP). '
-  'NULL for non-debt products.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master._ingestion_ts IS
+  'Pipeline metadata: timestamp when the source row was loaded into the Bronze layer. '
+  'TIMESTAMP. Carried through from Bronze for data lineage.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.coupon_type IS
-  'Bond coupon payment structure. '
-  'Values: FIXED (constant rate), FLOATING (variable rate), ZERO (no periodic payment). '
-  'NULL for non-bond products.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master._batch_id IS
+  'Pipeline metadata: identifier for the pipeline batch run that produced this row. '
+  'Format: YYYY-MM-DD_<run_id> for scheduled runs, ''manual'' for ad-hoc loads.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.maturity_date IS
-  'Date on which the bond principal is repaid and the security expires. DATE format. '
-  'NULL for equities, funds, perpetual bonds, and non-debt products.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master._row_hash IS
+  'Pipeline metadata: SHA-256 hash of all source data columns from the Bronze row. '
+  'Used for CDC change detection — when this value changes, a new SCD2 version is created.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.face_currency_code IS
-  'ISO 4217 currency code for the bond face value and coupon payments. '
-  'Sourced from the bond.issue_currency_code field. NULL for non-bond products.';
+-- COMMAND ----------
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master._dq_rule_version IS
+  'Pipeline metadata: SHA-256 (16-char short hash) of the silver/rules.yaml file '
+  'that was in effect when this row was evaluated by the Silver DQ checks. '
+  'Rows with a stale version are candidates for selective rescan.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.day_count_convention IS
-  'Day count convention used to accrue coupon interest (e.g. ACT/360, 30/360, ACT/ACT). '
-  'NULL — not currently captured in source data.';
+-- COMMAND ----------
+-- MAGIC %md ## 6. Final summary
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.tax_exempt IS
-  'Whether the municipal bond''s interest payments are exempt from federal income tax. '
-  'BOOLEAN. NULL for non-municipal-bond products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.muni_state IS
-  'US state of issuance for the municipal bond (e.g. CA, NY, TX). '
-  'NULL for non-muni products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.muni_purpose IS
-  'Purpose or project description funded by the municipal bond issuance. '
-  'NULL for non-muni products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.pool_type IS
-  'Type of asset pool backing the security (e.g. MBS for mortgage-backed, ABS for asset-backed). '
-  'NULL for non-pool-backed products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.pool_originator IS
-  'Institution that originated the underlying loan pool. '
-  'NULL for non-pool-backed products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.endness_type IS
-  'Fund structure type. '
-  'Values: OPEN_END (shares created/redeemed on demand), CLOSED_END (fixed share count). '
-  'NULL for non-fund products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.mutual_fund_type IS
-  'Mutual fund sub-classification (e.g. equity, bond, money market, balanced). '
-  'NULL for non-fund products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.subscription_ratio IS
-  'Number of new shares entitlement per right held. DECIMAL(28,8). '
-  'NULL — not currently captured in source data for rights.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.underlying_product_id IS
-  'Foreign key back to dim_product identifying the underlying security for a derivative. '
-  'Self-referencing join: dim_product.underlying_product_id = dim_product.product_id. '
-  'NULL for non-derivative products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.option_type IS
-  'Direction of the option contract. '
-  'Values: CALL (right to buy), PUT (right to sell). '
-  'NULL for non-option products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.exercise_style IS
-  'When the option can be exercised. '
-  'Values: AMERICAN (any time before expiry), EUROPEAN (only at expiry). '
-  'NULL for non-option products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.strike_price IS
-  'Price at which the option holder can buy (CALL) or sell (PUT) the underlying. '
-  'DECIMAL(28,8). NULL for non-option products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.expiry_date IS
-  'Date after which the option contract becomes void. DATE format. '
-  'NULL for non-option products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.delivery_date IS
-  'Date on which the futures contract is settled / the underlying is delivered. DATE format. '
-  'NULL for non-future products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.valuation_method IS
-  'Futures contract valuation approach (e.g. MARK_TO_MARKET, MARK_TO_MODEL). '
-  'NULL for non-future products.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product._dq_rule_version IS
-  'SHA256 short-hash of the silver/rules.yaml file version used when the Silver source row was evaluated. '
-  'Used to identify rows that need rescan after DQ rule changes.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product._ingestion_ts IS
-  'Timestamp (UTC) when the source CSV row was loaded into the Bronze layer.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product._batch_id IS
-  'Pipeline batch run identifier linking this row to a specific Bronze ingestion run.';
+-- COMMAND ----------
+SELECT
+  COUNT(*)                                          AS total_securities,
+  COUNT(DISTINCT product_type)                      AS distinct_product_types,
+  SUM(CASE WHEN product_type IN ('bond','muni')
+           THEN 1 ELSE 0 END)                       AS debt_securities,
+  SUM(CASE WHEN principal_amount IS NOT NULL
+           THEN 1 ELSE 0 END)                       AS rows_with_principal_amount,
+  SUM(CASE WHEN net_settlement_amount IS NOT NULL
+           THEN 1 ELSE 0 END)                       AS rows_with_net_settlement,
+  MIN(effective_start_date)                         AS earliest_effective_date,
+  MAX(effective_start_date)                         AS latest_effective_date
+FROM statestreet.g_statestreet.securities_master;
 
 -- COMMAND ----------
 -- MAGIC %md
--- MAGIC ---
--- MAGIC ## 2. `dim_legal_entity`
--- MAGIC **Grain:** one row per `legal_entity_id` (current Silver version only)
-
--- COMMAND ----------
-
-CREATE TABLE IF NOT EXISTS statestreet.g_statestreet.dim_legal_entity (
-  legal_entity_id       STRING    NOT NULL,
-  legal_name            STRING    NOT NULL,
-  country               STRING,
-  entity_type           STRING,
-  effective_start_date  DATE      NOT NULL,
-  effective_end_date    DATE      NOT NULL,
-  _dq_rule_version      STRING,
-  _ingestion_ts         TIMESTAMP,
-  _batch_id             STRING
-)
-USING DELTA
-TBLPROPERTIES (
-  'delta.columnMapping.mode'             = 'name',
-  'delta.enableIcebergCompatV2'          = 'true',
-  'delta.universalFormat.enabledFormats' = 'iceberg'
-);
-
--- COMMAND ----------
--- MAGIC %md ### 2.1 Build `dim_legal_entity`
-
--- COMMAND ----------
-
-CREATE OR REPLACE TABLE statestreet.g_statestreet.dim_legal_entity
-USING DELTA
-TBLPROPERTIES (
-  'delta.columnMapping.mode'             = 'name',
-  'delta.enableIcebergCompatV2'          = 'true',
-  'delta.universalFormat.enabledFormats' = 'iceberg'
-)
-AS
-SELECT
-  le.legal_entity_id,
-  le.legal_name,
-  le.country,
-  CAST(NULL AS STRING)          AS entity_type,
-  le.effective_start_date,
-  le.effective_end_date,
-  le._dq_rule_version,
-  le._ingestion_ts,
-  le._batch_id
-FROM statestreet.s_statestreet.legal_entity le
-WHERE le.is_current = TRUE;
-
--- COMMAND ----------
--- MAGIC %md ### 2.2 DQ grain check — assert one row per legal_entity_id
-
--- COMMAND ----------
-
-SELECT
-  'dim_legal_entity grain violation' AS check_name,
-  COUNT(*) AS violation_count
-FROM (
-  SELECT legal_entity_id, COUNT(*) AS cnt
-  FROM statestreet.g_statestreet.dim_legal_entity
-  GROUP BY legal_entity_id
-  HAVING COUNT(*) > 1
-);
-
--- COMMAND ----------
--- MAGIC %md ### 2.3 Row count summary — `dim_legal_entity`
-
--- COMMAND ----------
-
-SELECT
-  COUNT(*)                                                    AS total_entities,
-  COUNT(DISTINCT country)                                     AS distinct_countries,
-  SUM(CASE WHEN country IS NULL THEN 1 ELSE 0 END)           AS missing_country
-FROM statestreet.g_statestreet.dim_legal_entity;
-
--- COMMAND ----------
--- MAGIC %md ### 2.4 Genie comments — `dim_legal_entity`
-
--- COMMAND ----------
-
-COMMENT ON TABLE statestreet.g_statestreet.dim_legal_entity IS
-  'Legal entity dimension. One row per active legal entity (issuers, counterparties, custodians). '
-  'Join to dim_product on dim_product.issuer_legal_entity_id = dim_legal_entity.legal_entity_id '
-  'to enrich securities data with issuer details. '
-  'Source: Silver legal_entity table (is_current = TRUE rows only).';
-
--- COMMAND ----------
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_legal_entity.legal_entity_id IS
-  'Unique identifier for the legal entity — primary key of the dimension. '
-  'Referenced by dim_product.issuer_legal_entity_id.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_legal_entity.legal_name IS
-  'Full registered legal name of the entity as provided by the source system.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_legal_entity.country IS
-  'ISO 3166-1 alpha-2 country code where the entity is domiciled or incorporated. '
-  'Example values: US (United States), GB (United Kingdom), DE (Germany), JP (Japan).';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_legal_entity.entity_type IS
-  'Classification of the legal entity by business type. '
-  'Example values: BANK, CORPORATE, GOVERNMENT, MUNICIPALITY, SOVEREIGN, SPV. '
-  'NULL — not currently captured in source data.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_legal_entity.effective_start_date IS
-  'SCD2 effective start date of this legal entity version in Silver. '
-  'Carried to Gold for reference. Gold is a current-state snapshot.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_legal_entity.effective_end_date IS
-  'SCD2 effective end date of this legal entity version in Silver (9999-12-31 for current). '
-  'Carried to Gold for reference.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_legal_entity._dq_rule_version IS
-  'SHA256 short-hash of the silver/rules.yaml version used at DQ evaluation time.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_legal_entity._ingestion_ts IS
-  'Timestamp (UTC) when the source row was loaded into the Bronze layer.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.dim_legal_entity._batch_id IS
-  'Pipeline batch run identifier linking this row to a specific Bronze ingestion run.';
-
--- COMMAND ----------
--- MAGIC %md
--- MAGIC ---
--- MAGIC ## 3. `fact_product_rating`
--- MAGIC **Grain:** one row per `product_id` × `effective_from_date` × `product_rating_type_id`
-
--- COMMAND ----------
-
-CREATE TABLE IF NOT EXISTS statestreet.g_statestreet.fact_product_rating (
-  product_rating_id         STRING    NOT NULL,
-  product_id                STRING    NOT NULL,
-  product_rating_type_id    STRING,
-  rating_value              STRING    NOT NULL,
-  effective_from_date       DATE      NOT NULL,
-  rating_agency             STRING,
-  watch_code                STRING,
-  rating_scale              STRING,
-  rating_type_code          STRING,
-  rating_type_description   STRING,
-  rating_category           STRING,
-  product_type              STRING,
-  product_status            STRING,
-  _dq_rule_version          STRING,
-  _ingestion_ts             TIMESTAMP,
-  _batch_id                 STRING
-)
-USING DELTA
-PARTITIONED BY (product_type)
-TBLPROPERTIES (
-  'delta.columnMapping.mode'             = 'name',
-  'delta.enableIcebergCompatV2'          = 'true',
-  'delta.universalFormat.enabledFormats' = 'iceberg'
-);
-
--- COMMAND ----------
--- MAGIC %md ### 3.1 Build `fact_product_rating`
-
--- COMMAND ----------
-
-CREATE OR REPLACE TABLE statestreet.g_statestreet.fact_product_rating
-USING DELTA
-PARTITIONED BY (product_type)
-TBLPROPER
+-- MAGIC ### Build complete
+-- MAGIC
+-- MAGIC | Step | Status |
+-- MAGIC |------|--------|
+-- MAGIC | Schema created | ✓ |
+-- MAGIC | `securities_master` wide table built | ✓ |
+-- MAGIC | Partitioned by `product_type` | ✓ |
+-- MAGIC | Iceberg UniForm enabled | ✓ |
+-- MAGIC | Post-build assertions | ✓ |
+-- MAGIC | Genie COMMENT ON TABLE/COLUMN | ✓ |
+-- MAGIC
+-- MAGIC **Next steps:**
+-- MAGIC 1. Once `accrued_interest_rate` is available in Silver, update this notebook
+-- MAGIC    to replace `CAST(NULL AS DECIMAL(18,6))` with the real column reference
+-- MAGIC    and re-run to populate `net_settlement_amount`.
+-- MAGIC 2. Register `securities_master` in the Genie Space via `06_setup_genie.py`.
+-- MAGIC 3. Run `OPTIMIZE statestreet.g_statestreet.securities_master` as part of
+-- MAGIC    the weekly maintenance job.

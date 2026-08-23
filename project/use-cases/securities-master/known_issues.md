@@ -354,6 +354,55 @@ definition without calling `ingest_table()`.
 
 ---
 
+## SETUP-015: Pipeline resumes from wrong stage after agent_state.yaml is stale
+
+**Symptom**: `sml generate` starts from Deploy Agent instead of BA Agent even after
+all generated files were deleted.
+
+**Cause**: `agent_state.yaml` is gitignored and persists locally across sessions. If a
+previous run completed all stages and set `current_stage: deploy`, the next run resumes
+from deploy regardless of whether generated files exist.
+
+**Fix**: Delete `agent_state.yaml` to force a full restart:
+```bash
+rm project/use-cases/securities-master/agent_state.yaml
+```
+
+---
+
+## SETUP-016: Generated notebooks fail `databricks bundle validate` — not a notebook
+
+**Symptom**: `sml deploy` (or the pipeline deploy stage) fails with:
+```
+Error: expected a notebook for "...tasks[0].notebook_task.notebook_path"
+but got a file: file at .../03_bronze_ingest.py is not a notebook
+```
+(Same error can appear for `04_silver_conform.sql` or `05_gold_build.sql`.)
+
+**Cause**: The Developer Agent wrapped the generated code in a ` ```python ` or ` ```sql ` code fence.
+The file literally started with ` ``` ` instead of the required Databricks header,
+so Databricks rejected it as a non-notebook file.
+
+Required first lines:
+- Python notebooks: `# Databricks notebook source`
+- SQL notebooks: `-- Databricks notebook source`
+
+**Fix (already applied in code)**: `code_gen_agent._write_notebook()` now calls `_strip_code_fence()`
+to remove any wrapping ` ``` ` fence before writing the file.
+
+**If the files already exist on disk with the fence**, manually remove the first line:
+```bash
+tail -n +2 project/notebooks/03_bronze_ingest.py   > /tmp/b.py  && mv /tmp/b.py  project/notebooks/03_bronze_ingest.py
+tail -n +2 project/notebooks/04_silver_conform.sql > /tmp/s.sql && mv /tmp/s.sql project/notebooks/04_silver_conform.sql
+tail -n +2 project/notebooks/05_gold_build.sql    > /tmp/g.sql && mv /tmp/g.sql project/notebooks/05_gold_build.sql
+```
+Then verify all three:
+```bash
+for f in project/notebooks/03_bronze_ingest.py project/notebooks/04_silver_conform.sql project/notebooks/05_gold_build.sql; do echo "$f: $(head -1 $f)"; done
+```
+
+---
+
 ## SETUP-014: Gold — `COMMENT ON COLUMN rating_value` truncated — unclosed SQL string literal
 
 **File**: `05_gold_build.sql`

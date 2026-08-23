@@ -5,666 +5,644 @@
 layer: silver
 catalog: statestreet
 schema: s_statestreet
-scd2_tables:
-  - product
-  - legal_entity
-  - product_rating
+
+# SCD2 applies to: product, legal_entity, product_rating
+# All other tables: latest-version upsert (no SCD2)
+# Rejects table auto-created for every silver table as <table>_rejects
 
 tables:
 
   # ─────────────────────────────────────────────
-  # BASE PRODUCT TABLE (SCD2)
+  # BASE / CORE TABLES
   # ─────────────────────────────────────────────
+
   - name: product
-    source_table: statestreet.b_statestreet.product
+    source: statestreet.b_statestreet.product
     primary_key: [product_id]
     scd2: true
+    scd2_columns:
+      effective_start_date: DATE
+      effective_end_date: DATE
+      is_current: BOOLEAN
     partition_by: [type]
     iceberg_uniform: true
-    description: "Base security table. Every security has exactly one row here. SCD2 tracks lifecycle changes."
     columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "Unique security identifier (PK)"}
-      - {name: id_type,                 type: STRING,          nullable: false, comment: "Primary identifier type: CUSIP, ISIN, SEDOL, TICKER, BLOOMBERG_ID"}
-      - {name: type,                    type: STRING,          nullable: false, comment: "Product category: EQUITY, DEBT, FUND, DERIVATIVE, RIGHT"}
-      - {name: sub_type,                type: STRING,          nullable: true,  comment: "Subcategory: COMMON_STOCK, PREFERRED_STOCK, BOND, MUNI, POOL_BACKED, OPTION, FUTURE, FUND, RIGHT"}
-      - {name: status,                  type: STRING,          nullable: false, comment: "Lifecycle status: ACTIVE, INACTIVE, MATURED, SUSPENDED, DELISTED"}
-      - {name: settlement_type,         type: STRING,          nullable: true,  comment: "Settlement method"}
-      - {name: description,             type: STRING,          nullable: true,  comment: "Human-readable security name"}
-      - {name: issue_date,              type: DATE,            nullable: true,  comment: "Date the security was issued"}
-      - {name: issue_price,             type: DECIMAL(28,8),   nullable: true,  comment: "Price at issuance"}
-      - {name: current_face_value,      type: DECIMAL(28,8),   nullable: true,  comment: "Current face/par value"}
-      - {name: issuer_legal_entity_id,  type: STRING,          nullable: true,  comment: "FK to legal_entity.legal_entity_id"}
-      - {name: tick_ladder_scale_id,    type: STRING,          nullable: true,  comment: "FK to tick_ladder_scale.tick_ladder_scale_id"}
-    scd2_columns:
-      - {name: effective_start_date,    type: DATE,            nullable: false, comment: "Date this version became active"}
-      - {name: effective_end_date,      type: DATE,            nullable: false, comment: "Date this version was superseded; 9999-12-31 = current"}
-      - {name: is_current,              type: BOOLEAN,         nullable: false, comment: "TRUE for the active version"}
+      - {name: product_id,             type: STRING,         nullable: false, description: "Unique security identifier — primary key"}
+      - {name: id_type,                type: STRING,         nullable: false, description: "Primary identifier type: CUSIP, ISIN, SEDOL, TICKER, BLOOMBERG_ID"}
+      - {name: type,                   type: STRING,         nullable: false, description: "Product category: EQUITY, DEBT, FUND, DERIVATIVE, RIGHT"}
+      - {name: sub_type,               type: STRING,         nullable: true,  description: "Subcategory: COMMON_STOCK, PREFERRED_STOCK, BOND, MUNI, POOL_BACKED, OPTION, FUTURE, FUND, RIGHT"}
+      - {name: status,                 type: STRING,         nullable: false, description: "Lifecycle status: ACTIVE, INACTIVE, MATURED, SUSPENDED, DELISTED"}
+      - {name: settlement_type,        type: STRING,         nullable: true,  description: "Settlement method"}
+      - {name: description,            type: STRING,         nullable: true,  description: "Human-readable security name"}
+      - {name: issue_date,             type: DATE,           nullable: true,  description: "Date the security was issued"}
+      - {name: issue_price,            type: DECIMAL(28,8),  nullable: true,  description: "Price at issuance"}
+      - {name: current_face_value,     type: DECIMAL(28,8),  nullable: true,  description: "Current face/par value"}
+      - {name: issuer_legal_entity_id, type: STRING,         nullable: true,  description: "FK to legal_entity.legal_entity_id"}
+      - {name: tick_ladder_scale_id,   type: STRING,         nullable: true,  description: "FK to tick_ladder_scale.tick_ladder_scale_id"}
+    scd2_tracking_columns:
+      - {name: effective_start_date,   type: DATE,           nullable: false, description: "When this version became active"}
+      - {name: effective_end_date,     type: DATE,           nullable: false, description: "When this version was superseded (9999-12-31 = current)"}
+      - {name: is_current,             type: BOOLEAN,        nullable: false, description: "TRUE for the active version"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: product_rejects
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
 
-  # ─────────────────────────────────────────────
-  # GENERIC PRODUCT (legacy shadow — no SCD2, no DQ rules applied)
-  # ─────────────────────────────────────────────
   - name: generic_product
-    source_table: statestreet.b_statestreet.generic_product
-    primary_key: []          # deliberately empty — many rows per product by design
+    source: statestreet.b_statestreet.generic_product
+    primary_key: []          # deliberately no PK uniqueness — see USE-CASE-003
     scd2: false
+    partition_by: []
     iceberg_uniform: true
-    description: "Deprecated legacy shadow table. Multiple rows per product_id by design. No uniqueness DQ applied."
+    notes: "Deprecated legacy shadow table. One product_id maps to many rows by design. No PK uniqueness rule."
     columns:
-      - {name: product_id,              type: STRING,          nullable: true,  comment: "FK to product.product_id (non-unique in this table)"}
-      - {name: generic_product_id,      type: STRING,          nullable: true,  comment: "Legacy identifier"}
-      - {name: id_type,                 type: STRING,          nullable: true,  comment: "Identifier type"}
-      - {name: identifier_value,        type: STRING,          nullable: true,  comment: "Identifier value"}
-      - {name: description,             type: STRING,          nullable: true,  comment: "Legacy description"}
-      - {name: status,                  type: STRING,          nullable: true,  comment: "Legacy status"}
+      - {name: product_id,             type: STRING,         nullable: true,  description: "FK to product.product_id — not unique in this table"}
+      - {name: generic_product_id,     type: STRING,         nullable: true,  description: "Legacy generic product identifier"}
+      - {name: description,            type: STRING,         nullable: true,  description: "Legacy product description"}
+      - {name: type,                   type: STRING,         nullable: true,  description: "Legacy product type code"}
+      - {name: status,                 type: STRING,         nullable: true,  description: "Legacy status value"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: generic_product_rejects
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
 
-  # ─────────────────────────────────────────────
-  # LEGAL ENTITY (SCD2)
-  # ─────────────────────────────────────────────
   - name: legal_entity
-    source_table: statestreet.b_statestreet.legal_entity
+    source: statestreet.b_statestreet.legal_entity
     primary_key: [legal_entity_id]
     scd2: true
-    iceberg_uniform: true
-    description: "Issuers and counterparties. SCD2 tracks name/country/type changes over time."
-    columns:
-      - {name: legal_entity_id,         type: STRING,          nullable: false, comment: "Unique entity identifier (PK)"}
-      - {name: legal_name,              type: STRING,          nullable: false, comment: "Legal entity name"}
-      - {name: country,                 type: STRING,          nullable: true,  comment: "ISO 3166-1 alpha-2 country code"}
-      - {name: entity_type,             type: STRING,          nullable: true,  comment: "BANK, CORPORATE, GOVERNMENT, etc."}
     scd2_columns:
-      - {name: effective_start_date,    type: DATE,            nullable: false, comment: "Date this version became active"}
-      - {name: effective_end_date,      type: DATE,            nullable: false, comment: "Date this version was superseded; 9999-12-31 = current"}
-      - {name: is_current,              type: BOOLEAN,         nullable: false, comment: "TRUE for the active version"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: legal_entity_rejects
-
-  # ─────────────────────────────────────────────
-  # TICK LADDER SCALE
-  # ─────────────────────────────────────────────
-  - name: tick_ladder_scale
-    source_table: statestreet.b_statestreet.tick_ladder_scale
-    primary_key: [tick_ladder_scale_id]
-    scd2: false
+      effective_start_date: DATE
+      effective_end_date: DATE
+      is_current: BOOLEAN
+    partition_by: []
     iceberg_uniform: true
-    description: "Reference table for minimum price increment scales."
     columns:
-      - {name: tick_ladder_scale_id,    type: STRING,          nullable: false, comment: "Unique scale identifier (PK)"}
-      - {name: description,             type: STRING,          nullable: true,  comment: "Human-readable description of the scale"}
+      - {name: legal_entity_id,        type: STRING,         nullable: false, description: "Unique entity identifier — primary key"}
+      - {name: legal_name,             type: STRING,         nullable: false, description: "Legal entity name"}
+      - {name: country,                type: STRING,         nullable: true,  description: "ISO 3166-1 alpha-2 country code"}
+      - {name: legal_entity_type,      type: STRING,         nullable: true,  description: "Entity classification: BANK, CORPORATE, GOVERNMENT, etc."}
+      - {name: registration_number,    type: STRING,         nullable: true,  description: "Legal registration or incorporation number"}
+      - {name: lei_code,               type: STRING,         nullable: true,  description: "Legal Entity Identifier (20-character ISO 17442 code)"}
+    scd2_tracking_columns:
+      - {name: effective_start_date,   type: DATE,           nullable: false}
+      - {name: effective_end_date,     type: DATE,           nullable: false}
+      - {name: is_current,             type: BOOLEAN,        nullable: false}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: tick_ladder_scale_rejects
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
 
   # ─────────────────────────────────────────────
-  # TICK
+  # REFERENCE / DIMENSION TABLES
   # ─────────────────────────────────────────────
-  - name: tick
-    source_table: statestreet.b_statestreet.tick
-    primary_key: [tick_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Individual tick entries within a tick ladder scale."
-    columns:
-      - {name: tick_id,                 type: STRING,          nullable: false, comment: "Unique tick identifier (PK)"}
-      - {name: tick_ladder_scale_id,    type: STRING,          nullable: false, comment: "FK to tick_ladder_scale.tick_ladder_scale_id"}
-      - {name: price_from,              type: DECIMAL(28,8),   nullable: true,  comment: "Lower bound of price range for this tick"}
-      - {name: price_to,                type: DECIMAL(28,8),   nullable: true,  comment: "Upper bound of price range for this tick"}
-      - {name: tick_size,               type: DECIMAL(28,8),   nullable: true,  comment: "Minimum price increment at this level"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: tick_rejects
 
-  # ─────────────────────────────────────────────
-  # PRODUCT RATING (SCD2)
-  # ─────────────────────────────────────────────
-  - name: product_rating
-    source_table: statestreet.b_statestreet.product_rating
-    primary_key: [product_rating_id]
-    scd2: true
-    partition_by: [product_rating_type_id]
-    iceberg_uniform: true
-    description: "Credit ratings assigned to securities. SCD2 tracks rating changes over time."
-    columns:
-      - {name: product_rating_id,       type: STRING,          nullable: false, comment: "Unique rating record identifier (PK)"}
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to product.product_id"}
-      - {name: product_rating_type_id,  type: STRING,          nullable: true,  comment: "FK to product_rating_type.product_rating_type_id"}
-      - {name: rating_value,            type: STRING,          nullable: false, comment: "Rating code e.g. AAA, BBB-, BB+"}
-      - {name: rating_agency,           type: STRING,          nullable: true,  comment: "Agency that issued the rating e.g. Moodys, SP, Fitch"}
-      - {name: watch_code,              type: STRING,          nullable: true,  comment: "Watch status e.g. POSITIVE, NEGATIVE, STABLE"}
-      - {name: rating_scale,            type: STRING,          nullable: true,  comment: "Rating scale identifier"}
-      - {name: effective_from_date,     type: DATE,            nullable: false, comment: "Date on which this rating became effective"}
-    scd2_columns:
-      - {name: effective_start_date,    type: DATE,            nullable: false, comment: "Pipeline SCD2 start date (row version open date)"}
-      - {name: effective_end_date,      type: DATE,            nullable: false, comment: "Pipeline SCD2 end date; 9999-12-31 = current"}
-      - {name: is_current,              type: BOOLEAN,         nullable: false, comment: "TRUE for the active version"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: product_rating_rejects
-
-  # ─────────────────────────────────────────────
-  # PRODUCT RATING TYPE
-  # ─────────────────────────────────────────────
-  - name: product_rating_type
-    source_table: statestreet.b_statestreet.product_rating_type
-    primary_key: [product_rating_type_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Reference table of rating type definitions."
-    columns:
-      - {name: product_rating_type_id,  type: STRING,          nullable: false, comment: "Unique rating type identifier (PK)"}
-      - {name: rating_type_code,        type: STRING,          nullable: true,  comment: "Short code for the rating type"}
-      - {name: description,             type: STRING,          nullable: true,  comment: "Description of the rating type"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: product_rating_type_rejects
-
-  # ─────────────────────────────────────────────
-  # CLASSIFICATION
-  # ─────────────────────────────────────────────
-  - name: classification
-    source_table: statestreet.b_statestreet.classification
-    primary_key: [classification_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Classification tags applied to products (e.g. sector, industry, asset class)."
-    columns:
-      - {name: classification_id,       type: STRING,          nullable: false, comment: "Unique classification record identifier (PK)"}
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to product.product_id"}
-      - {name: classification_type,     type: STRING,          nullable: true,  comment: "Classification scheme e.g. GICS, SIC, NAICS"}
-      - {name: classification_value,    type: STRING,          nullable: true,  comment: "Value within the classification scheme"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: classification_rejects
-
-  # ─────────────────────────────────────────────
-  # IDENTIFIERS
-  # ─────────────────────────────────────────────
-  - name: identifiers
-    source_table: statestreet.b_statestreet.identifiers
-    primary_key: [identifier_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "All identifier aliases for a product (CUSIP, ISIN, SEDOL, TICKER, BLOOMBERG_ID)."
-    columns:
-      - {name: identifier_id,           type: STRING,          nullable: false, comment: "Unique identifier record (PK)"}
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to product.product_id"}
-      - {name: id_type,                 type: STRING,          nullable: false, comment: "Identifier type: CUSIP, ISIN, SEDOL, TICKER, BLOOMBERG_ID"}
-      - {name: identifier_value,        type: STRING,          nullable: false, comment: "The actual identifier string"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: identifiers_rejects
-
-  # ─────────────────────────────────────────────
-  # SERIES
-  # ─────────────────────────────────────────────
-  - name: series
-    source_table: statestreet.b_statestreet.series
-    primary_key: [series_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Optional grouping dimension for stocks and listed derivatives."
-    columns:
-      - {name: series_id,               type: STRING,          nullable: false, comment: "Unique series identifier (PK)"}
-      - {name: description,             type: STRING,          nullable: true,  comment: "Series description"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: series_rejects
-
-  # ─────────────────────────────────────────────
-  # CURRENCY
-  # ─────────────────────────────────────────────
   - name: currency
-    source_table: statestreet.b_statestreet.currency
+    source: statestreet.b_statestreet.currency
     primary_key: [currency_code]
     scd2: false
+    partition_by: []
     iceberg_uniform: true
-    description: "ISO 4217 currency reference. 2 rows are intentionally bad (DQ test seed — see USE-CASE-002)."
+    notes: "Two rows deliberately invalid (USE-CASE-002). Expect 2 rows in currency_rejects."
     columns:
-      - {name: currency_code,           type: STRING,          nullable: false, comment: "ISO 4217 3-letter currency code (PK)"}
-      - {name: currency_name,           type: STRING,          nullable: true,  comment: "Full currency name"}
-      - {name: currency_symbol,         type: STRING,          nullable: true,  comment: "Currency symbol"}
+      - {name: currency_code,          type: STRING,         nullable: false, description: "ISO 4217 3-letter currency code — primary key"}
+      - {name: currency_name,          type: STRING,         nullable: true,  description: "Full currency name"}
+      - {name: numeric_code,           type: STRING,         nullable: true,  description: "ISO 4217 numeric code"}
+      - {name: minor_units,            type: INTEGER,        nullable: true,  description: "Number of decimal places (e.g. 2 for USD)"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: currency_rejects
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
 
-  # ─────────────────────────────────────────────
-  # FUND (extends product)
-  # ─────────────────────────────────────────────
-  - name: fund
-    source_table: statestreet.b_statestreet.fund
-    primary_key: [product_id]
+  - name: series
+    source: statestreet.b_statestreet.series
+    primary_key: [series_id]
     scd2: false
+    partition_by: []
     iceberg_uniform: true
-    description: "Fund-specific attributes. Joins to product on product_id."
     columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to product.product_id (PK)"}
-      - {name: endness_type,            type: STRING,          nullable: true,  comment: "OPEN_END or CLOSED_END"}
-      - {name: mutual_fund_type,        type: STRING,          nullable: true,  comment: "Fund subtype e.g. MONEY_MARKET, EQUITY, FIXED_INCOME"}
+      - {name: series_id,              type: STRING,         nullable: false, description: "Unique series identifier — primary key"}
+      - {name: series_name,            type: STRING,         nullable: true,  description: "Series name or description"}
+      - {name: series_type,            type: STRING,         nullable: true,  description: "Series classification"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: fund_rejects
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
 
-  # ─────────────────────────────────────────────
-  # RIGHT (extends product)
-  # ─────────────────────────────────────────────
-  - name: right
-    source_table: statestreet.b_statestreet.right
-    primary_key: [product_id]
+  - name: tick_ladder_scale
+    source: statestreet.b_statestreet.tick_ladder_scale
+    primary_key: [tick_ladder_scale_id]
     scd2: false
+    partition_by: []
     iceberg_uniform: true
-    description: "Subscription rights extending product. Grain: one row per product_id."
     columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to product.product_id (PK)"}
-      - {name: subscription_ratio,      type: DECIMAL(28,8),   nullable: true,  comment: "Number of shares entitled per right"}
-      - {name: expiry_date,             type: DATE,            nullable: true,  comment: "Date the subscription right expires"}
+      - {name: tick_ladder_scale_id,   type: STRING,         nullable: false, description: "Unique tick ladder scale identifier — primary key"}
+      - {name: scale_name,             type: STRING,         nullable: true,  description: "Human-readable scale name"}
+      - {name: description,            type: STRING,         nullable: true,  description: "Scale description"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: right_rejects
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
 
-  # ─────────────────────────────────────────────
-  # DEBT (extends product)
-  # ─────────────────────────────────────────────
-  - name: debt
-    source_table: statestreet.b_statestreet.debt
-    primary_key: [product_id]
+  - name: tick
+    source: statestreet.b_statestreet.tick
+    primary_key: [tick_id]
     scd2: false
+    partition_by: []
     iceberg_uniform: true
-    description: "Debt instrument base attributes. Extends product. Bond and PoolBackedSecurity extend debt."
     columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to product.product_id (PK)"}
-      - {name: total_amount_issued,     type: DECIMAL(28,8),   nullable: true,  comment: "Total face amount of the debt issuance"}
-      - {name: issue_date_settlement,   type: DATE,            nullable: true,  comment: "Settlement date of the original issue"}
+      - {name: tick_id,                type: STRING,         nullable: false, description: "Unique tick identifier — primary key"}
+      - {name: tick_ladder_scale_id,   type: STRING,         nullable: false, description: "FK to tick_ladder_scale.tick_ladder_scale_id"}
+      - {name: price_from,             type: DECIMAL(28,8),  nullable: true,  description: "Lower bound of the price range for this tick"}
+      - {name: price_to,               type: DECIMAL(28,8),  nullable: true,  description: "Upper bound of the price range for this tick"}
+      - {name: tick_size,              type: DECIMAL(28,8),  nullable: true,  description: "Minimum price increment in this band"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: debt_rejects
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
 
-  # ─────────────────────────────────────────────
-  # BOND (extends debt)
-  # ─────────────────────────────────────────────
-  - name: bond
-    source_table: statestreet.b_statestreet.bond
-    primary_key: [product_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Bond-specific attributes. Extends debt. Join to debt and product on product_id."
-    columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to product.product_id / debt.product_id (PK)"}
-      - {name: coupon_type,             type: STRING,          nullable: false, comment: "FIXED, FLOATING, or ZERO"}
-      - {name: maturity_date,           type: DATE,            nullable: false, comment: "Date the bond matures"}
-      - {name: issue_currency_code,     type: STRING,          nullable: false, comment: "ISO 4217 currency code for face value"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: bond_rejects
-
-  # ─────────────────────────────────────────────
-  # MUNI (extends bond)
-  # ─────────────────────────────────────────────
-  - name: muni
-    source_table: statestreet.b_statestreet.muni
-    primary_key: [product_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Municipal bond specific attributes. Extends bond."
-    columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to bond.product_id (PK)"}
-      - {name: tax_exempt,              type: BOOLEAN,         nullable: true,  comment: "Whether coupon payments are tax-exempt"}
-      - {name: state,                   type: STRING,          nullable: true,  comment: "US state of issuance (2-letter code)"}
-      - {name: purpose,                 type: STRING,          nullable: true,  comment: "Purpose of the municipal issuance e.g. GENERAL_OBLIGATION, REVENUE"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: muni_rejects
-
-  # ─────────────────────────────────────────────
-  # POOL BACKED SECURITY (extends debt — NOT bond)
-  # ─────────────────────────────────────────────
-  - name: pool_backed_security
-    source_table: statestreet.b_statestreet.pool_backed_security
-    primary_key: [product_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Pool-backed (ABS/MBS) attributes. Extends debt directly, not bond. See USE-CASE-005."
-    columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to debt.product_id (PK)"}
-      - {name: pool_type,               type: STRING,          nullable: true,  comment: "Pool category e.g. MORTGAGE, AUTO, STUDENT_LOAN"}
-      - {name: originator,              type: STRING,          nullable: true,  comment: "Originating institution name"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: pool_backed_security_rejects
-
-  # ─────────────────────────────────────────────
-  # STOCK (extends product)
-  # ─────────────────────────────────────────────
-  - name: stock
-    source_table: statestreet.b_statestreet.stock
-    primary_key: [product_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Stock base attributes. Extends product. CommonStock and PreferredStock extend stock."
-    columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to product.product_id (PK)"}
-      - {name: series_id,               type: STRING,          nullable: true,  comment: "FK to series.series_id"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: stock_rejects
-
-  # ─────────────────────────────────────────────
-  # COMMON STOCK (extends stock)
-  # ─────────────────────────────────────────────
-  - name: common_stock
-    source_table: statestreet.b_statestreet.common_stock
-    primary_key: [product_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Common stock specific attributes. Extends stock."
-    columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to stock.product_id (PK)"}
-      - {name: voting_rights,           type: BOOLEAN,         nullable: true,  comment: "TRUE if shareholders have voting rights"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: common_stock_rejects
-
-  # ─────────────────────────────────────────────
-  # PREFERRED STOCK (extends stock)
-  # ─────────────────────────────────────────────
-  - name: preferred_stock
-    source_table: statestreet.b_statestreet.preferred_stock
-    primary_key: [product_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Preferred stock specific attributes. Extends stock."
-    columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to stock.product_id (PK)"}
-      - {name: dividend_right,          type: STRING,          nullable: true,  comment: "CUMULATIVE or NON_CUMULATIVE"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: preferred_stock_rejects
-
-  # ─────────────────────────────────────────────
-  # LISTED DERIVATIVE (extends product)
-  # ─────────────────────────────────────────────
-  - name: listed_derivative
-    source_table: statestreet.b_statestreet.listed_derivative
-    primary_key: [product_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Listed derivative base attributes. Option and Future extend this table."
-    columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to product.product_id (PK)"}
-      - {name: series_id,               type: STRING,          nullable: true,  comment: "FK to series.series_id"}
-      - {name: underlying_product_id,   type: STRING,          nullable: false, comment: "FK to product.product_id for the underlying security"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: listed_derivative_rejects
-
-  # ─────────────────────────────────────────────
-  # OPTION (extends listed_derivative)
-  # ─────────────────────────────────────────────
-  - name: option
-    source_table: statestreet.b_statestreet.option
-    primary_key: [product_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Option-specific attributes. Extends listed_derivative."
-    columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to listed_derivative.product_id (PK)"}
-      - {name: option_type,             type: STRING,          nullable: false, comment: "CALL or PUT"}
-      - {name: exercise_style,          type: STRING,          nullable: false, comment: "AMERICAN or EUROPEAN"}
-      - {name: strike_price,            type: DECIMAL(28,8),   nullable: true,  comment: "Strike/exercise price"}
-      - {name: expiry_date,             type: DATE,            nullable: true,  comment: "Expiration date of the option"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: option_rejects
-
-  # ─────────────────────────────────────────────
-  # FUTURE (extends listed_derivative)
-  # ─────────────────────────────────────────────
-  - name: future
-    source_table: statestreet.b_statestreet.future
-    primary_key: [product_id]
-    scd2: false
-    iceberg_uniform: true
-    description: "Futures-specific attributes. Extends listed_derivative."
-    columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to listed_derivative.product_id (PK)"}
-      - {name: delivery_date,           type: DATE,            nullable: true,  comment: "Futures delivery/settlement date"}
-      - {name: valuation_method,        type: STRING,          nullable: true,  comment: "Valuation method e.g. MARK_TO_MARKET"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: future_rejects
-
-  # ─────────────────────────────────────────────
-  # COUPON
-  # ─────────────────────────────────────────────
-  - name: coupon
-    source_table: statestreet.b_statestreet.coupon
-    primary_key: [coupon_id]
-    scd2: false
-    partition_by: [coupon_type]
-    iceberg_uniform: true
-    description: "Coupon payment schedule records. 0..* rows per bond product_id."
-    columns:
-      - {name: coupon_id,               type: STRING,          nullable: false, comment: "Unique coupon record identifier (PK)"}
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to bond.product_id"}
-      - {name: coupon_rate,             type: DECIMAL(28,8),   nullable: false, comment: "Annual coupon rate as a percentage"}
-      - {name: payment_date,            type: DATE,            nullable: true,  comment: "Scheduled coupon payment date"}
-      - {name: coupon_type,             type: STRING,          nullable: true,  comment: "FIXED or FLOATING"}
-      - {name: frequency,               type: STRING,          nullable: true,  comment: "ANNUAL, SEMI_ANNUAL, QUARTERLY, MONTHLY"}
-    metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: coupon_rejects
-
-  # ─────────────────────────────────────────────
-  # PRINCIPAL REDEMPTION PROVISION
-  # ─────────────────────────────────────────────
   - name: principal_redemption_provision
-    source_table: statestreet.b_statestreet.principal_redemption_provision
+    source: statestreet.b_statestreet.principal_redemption_provision
     primary_key: [principal_redemption_provision_id]
     scd2: false
+    partition_by: []
     iceberg_uniform: true
-    description: "Reference table of principal redemption provision types (callable, puttable, sinking fund, etc.)."
     columns:
-      - {name: principal_redemption_provision_id, type: STRING, nullable: false, comment: "Unique provision identifier (PK)"}
-      - {name: provision_type,          type: STRING,          nullable: true,  comment: "CALLABLE, PUTTABLE, SINKING_FUND, CONVERTIBLE, etc."}
-      - {name: description,             type: STRING,          nullable: true,  comment: "Human-readable description of the provision"}
+      - {name: principal_redemption_provision_id, type: STRING, nullable: false, description: "Unique provision identifier — primary key"}
+      - {name: provision_type,         type: STRING,         nullable: true,  description: "Type of redemption provision (e.g. CALLABLE, PUTTABLE, SINKING_FUND)"}
+      - {name: description,            type: STRING,         nullable: true,  description: "Human-readable description of the provision"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: principal_redemption_provision_rejects
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: product_rating_type
+    source: statestreet.b_statestreet.product_rating_type
+    primary_key: [product_rating_type_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_rating_type_id, type: STRING,         nullable: false, description: "Unique rating type identifier — primary key"}
+      - {name: rating_agency,          type: STRING,         nullable: true,  description: "Rating agency name (e.g. Moodys, SP, Fitch)"}
+      - {name: rating_type_code,       type: STRING,         nullable: true,  description: "Short code for the rating type"}
+      - {name: rating_type_name,       type: STRING,         nullable: true,  description: "Full name of the rating type"}
+      - {name: rating_scale,           type: STRING,         nullable: true,  description: "Scale description (e.g. LONG_TERM, SHORT_TERM)"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
 
   # ─────────────────────────────────────────────
-  # LISTED DERIVATIVE TICK (bridge M:M)
+  # PRODUCT SUBTYPE TABLES (extend product)
   # ─────────────────────────────────────────────
+
+  - name: stock
+    source: statestreet.b_statestreet.stock
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id — PK in this table"}
+      - {name: series_id,              type: STRING,         nullable: true,  description: "FK to series.series_id"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: common_stock
+    source: statestreet.b_statestreet.common_stock
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id — PK in this table"}
+      - {name: voting_rights,          type: BOOLEAN,        nullable: true,  description: "TRUE if shares carry voting rights"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: preferred_stock
+    source: statestreet.b_statestreet.preferred_stock
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id — PK in this table"}
+      - {name: dividend_right,         type: STRING,         nullable: true,  description: "Dividend entitlement type: CUMULATIVE, NON_CUMULATIVE"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: fund
+    source: statestreet.b_statestreet.fund
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id — PK in this table"}
+      - {name: endness_type,           type: STRING,         nullable: true,  description: "OPEN_END or CLOSED_END"}
+      - {name: mutual_fund_type,       type: STRING,         nullable: true,  description: "Fund sub-classification (e.g. ETF, MUTUAL_FUND, HEDGE_FUND)"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: right
+    source: statestreet.b_statestreet.right
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id — PK in this table"}
+      - {name: underlying_product_id,  type: STRING,         nullable: true,  description: "FK to product.product_id for the underlying security"}
+      - {name: expiry_date,            type: DATE,           nullable: true,  description: "Date on which the right expires"}
+      - {name: subscription_ratio,     type: DECIMAL(28,8),  nullable: true,  description: "Number of rights required to acquire one underlying share"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: debt
+    source: statestreet.b_statestreet.debt
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id — PK in this table"}
+      - {name: total_amount_issued,    type: DECIMAL(28,8),  nullable: true,  description: "Total notional/face amount issued"}
+      - {name: issue_currency_code,    type: STRING,         nullable: true,  description: "ISO 4217 currency of issuance — FK to currency"}
+      - {name: settlement_days,        type: INTEGER,        nullable: true,  description: "Standard settlement days (T+N)"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: bond
+    source: statestreet.b_statestreet.bond
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id and debt.product_id — PK in this table"}
+      - {name: coupon_type,            type: STRING,         nullable: false, description: "Coupon structure: FIXED, FLOATING, ZERO"}
+      - {name: maturity_date,          type: DATE,           nullable: false, description: "Date on which the bond matures"}
+      - {name: issue_currency_code,    type: STRING,         nullable: false, description: "ISO 4217 currency code for face value — FK to currency"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: muni
+    source: statestreet.b_statestreet.muni
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to bond.product_id — PK in this table"}
+      - {name: tax_exempt,             type: BOOLEAN,        nullable: true,  description: "TRUE if interest is federally tax-exempt"}
+      - {name: state,                  type: STRING,         nullable: true,  description: "US state of issuance (2-letter code)"}
+      - {name: purpose,                type: STRING,         nullable: true,  description: "Municipal bond purpose (e.g. GENERAL_OBLIGATION, REVENUE)"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: pool_backed_security
+    source: statestreet.b_statestreet.pool_backed_security
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    notes: "Extends debt, NOT bond. Bond-specific columns will be NULL in dim_product for pool-backed securities."
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to debt.product_id — PK in this table"}
+      - {name: pool_type,              type: STRING,         nullable: true,  description: "Type of pool backing (e.g. MORTGAGE, AUTO, STUDENT_LOAN)"}
+      - {name: originator,             type: STRING,         nullable: true,  description: "Entity that originated the pool"}
+      - {name: pass_through_rate,      type: DECIMAL(28,8),  nullable: true,  description: "Coupon pass-through rate as a percentage"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: listed_derivative
+    source: statestreet.b_statestreet.listed_derivative
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id — PK in this table"}
+      - {name: series_id,              type: STRING,         nullable: true,  description: "FK to series.series_id"}
+      - {name: underlying_product_id,  type: STRING,         nullable: true,  description: "FK to product.product_id for the underlying security"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: option
+    source: statestreet.b_statestreet.option
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to listed_derivative.product_id — PK in this table"}
+      - {name: option_type,            type: STRING,         nullable: false, description: "CALL or PUT"}
+      - {name: exercise_style,         type: STRING,         nullable: false, description: "AMERICAN or EUROPEAN"}
+      - {name: strike_price,           type: DECIMAL(28,8),  nullable: true,  description: "Strike/exercise price"}
+      - {name: expiry_date,            type: DATE,           nullable: true,  description: "Date on which the option expires"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: future
+    source: statestreet.b_statestreet.future
+    primary_key: [product_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to listed_derivative.product_id — PK in this table"}
+      - {name: delivery_date,          type: DATE,           nullable: true,  description: "Futures contract delivery/settlement date"}
+      - {name: valuation_method,       type: STRING,         nullable: true,  description: "Valuation approach (e.g. MARK_TO_MARKET)"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  # ─────────────────────────────────────────────
+  # RELATIONSHIP / ATTRIBUTE TABLES
+  # ─────────────────────────────────────────────
+
+  - name: identifiers
+    source: statestreet.b_statestreet.identifiers
+    primary_key: [identifier_id]
+    scd2: false
+    partition_by: [id_type]
+    iceberg_uniform: true
+    columns:
+      - {name: identifier_id,          type: STRING,         nullable: false, description: "Unique identifier record PK"}
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id"}
+      - {name: id_type,                type: STRING,         nullable: false, description: "Identifier type: CUSIP, ISIN, SEDOL, TICKER, BLOOMBERG_ID"}
+      - {name: identifier_value,       type: STRING,         nullable: false, description: "The actual identifier string"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: classification
+    source: statestreet.b_statestreet.classification
+    primary_key: [classification_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: classification_id,      type: STRING,         nullable: false, description: "Unique classification record PK"}
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id"}
+      - {name: classification_type,    type: STRING,         nullable: true,  description: "Classification scheme (e.g. GICS, SIC, NAICS)"}
+      - {name: classification_code,    type: STRING,         nullable: true,  description: "Classification code within the scheme"}
+      - {name: classification_name,    type: STRING,         nullable: true,  description: "Human-readable classification name"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: product_rating
+    source: statestreet.b_statestreet.product_rating
+    primary_key: [product_rating_id]
+    scd2: true
+    scd2_columns:
+      effective_start_date: DATE
+      effective_end_date: DATE
+      is_current: BOOLEAN
+    partition_by: []
+    iceberg_uniform: true
+    notes: "SCD2 tracks rating changes over time. Grain with SCD2: one row per product+rating_type+effective_from_date version."
+    columns:
+      - {name: product_rating_id,      type: STRING,         nullable: false, description: "Unique rating record PK"}
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to product.product_id"}
+      - {name: product_rating_type_id, type: STRING,         nullable: true,  description: "FK to product_rating_type.product_rating_type_id"}
+      - {name: rating_value,           type: STRING,         nullable: false, description: "Rating code (e.g. AAA, BBB-, BB+)"}
+      - {name: effective_from_date,    type: DATE,           nullable: false, description: "Date the rating was assigned"}
+      - {name: rating_agency,          type: STRING,         nullable: true,  description: "Rating agency that issued the rating"}
+      - {name: watch_code,             type: STRING,         nullable: true,  description: "Rating watch status (e.g. POSITIVE, NEGATIVE, STABLE)"}
+    scd2_tracking_columns:
+      - {name: effective_start_date,   type: DATE,           nullable: false}
+      - {name: effective_end_date,     type: DATE,           nullable: false}
+      - {name: is_current,             type: BOOLEAN,        nullable: false}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  - name: coupon
+    source: statestreet.b_statestreet.coupon
+    primary_key: [coupon_id]
+    scd2: false
+    partition_by: []
+    iceberg_uniform: true
+    columns:
+      - {name: coupon_id,              type: STRING,         nullable: false, description: "Unique coupon schedule record PK"}
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to bond.product_id"}
+      - {name: coupon_rate,            type: DECIMAL(28,8),  nullable: false, description: "Annual coupon rate as a percentage (0–100)"}
+      - {name: payment_date,           type: DATE,           nullable: false, description: "Scheduled coupon payment date"}
+      - {name: coupon_type,            type: STRING,         nullable: true,  description: "FIXED or FLOATING"}
+      - {name: frequency,              type: STRING,         nullable: true,  description: "Payment frequency: ANNUAL, SEMI_ANNUAL, QUARTERLY, MONTHLY"}
+    metadata_columns:
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
+
+  # ─────────────────────────────────────────────
+  # BRIDGE TABLES
+  # ─────────────────────────────────────────────
+
   - name: listed_derivative_tick
-    source_table: statestreet.b_statestreet.listed_derivative_tick
+    source: statestreet.b_statestreet.listed_derivative_tick
     primary_key: [product_id, tick_id]
     scd2: false
+    partition_by: []
     iceberg_uniform: true
-    description: "Bridge table linking listed derivatives to their applicable tick entries. Composite PK."
     columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to listed_derivative.product_id (part of composite PK)"}
-      - {name: tick_id,                 type: STRING,          nullable: false, comment: "FK to tick.tick_id (part of composite PK)"}
+      - {name: product_id,             type: STRING,         nullable: false, description: "FK to listed_derivative.product_id — part of composite PK"}
+      - {name: tick_id,                type: STRING,         nullable: false, description: "FK to tick.tick_id — part of composite PK"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: listed_derivative_tick_rejects
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
 
-  # ─────────────────────────────────────────────
-  # DEBT PRINCIPAL REDEMPTION PROVISION (bridge M:M)
-  # ─────────────────────────────────────────────
   - name: debt_principal_redemption_provision
-    source_table: statestreet.b_statestreet.debt_principal_redemption_provision
+    source: statestreet.b_statestreet.debt_principal_redemption_provision
     primary_key: [product_id, principal_redemption_provision_id]
     scd2: false
+    partition_by: []
     iceberg_uniform: true
-    description: "Bridge table linking debt instruments to their applicable principal redemption provisions."
     columns:
-      - {name: product_id,              type: STRING,          nullable: false, comment: "FK to debt.product_id (part of composite PK)"}
-      - {name: principal_redemption_provision_id, type: STRING, nullable: false, comment: "FK to principal_redemption_provision.principal_redemption_provision_id (part of composite PK)"}
+      - {name: product_id,                        type: STRING,  nullable: false, description: "FK to debt.product_id — part of composite PK"}
+      - {name: principal_redemption_provision_id, type: STRING,  nullable: false, description: "FK to principal_redemption_provision — part of composite PK"}
+      - {name: effective_date,                    type: DATE,    nullable: true,  description: "Date from which the provision applies"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
-    rejects_table: debt_principal_redemption_provision_rejects
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+      - {name: _dq_rule_version,       type: STRING}
 
   # ─────────────────────────────────────────────
-  # DQ RULES CATALOG (Bronze-only metadata — no Silver DQ applied)
+  # METADATA-ONLY TABLES (Bronze-landed, no DQ)
   # ─────────────────────────────────────────────
+
   - name: dq_rules_catalog
-    source_table: statestreet.b_statestreet.dq_rules_catalog
+    source: statestreet.b_statestreet.dq_rules_catalog
     primary_key: [rule_id]
     scd2: false
+    partition_by: []
     iceberg_uniform: false
-    dq_exempt: true
-    description: "DQ framework metadata table. Bronze-only per USE-CASE-001. No Silver DQ rules applied. Reference only."
+    notes: "Reference metadata. Bronze-only ingestion per USE-CASE-001. Passed through to Silver as-is for auditability — no DQ rules applied."
+    dq_rules_applied: false
     columns:
-      - {name: rule_id,                 type: STRING,          nullable: false, comment: "DQ rule identifier (PK)"}
-      - {name: table_name,              type: STRING,          nullable: true,  comment: "Target table for this rule"}
-      - {name: column_name,             type: STRING,          nullable: true,  comment: "Target column for this rule"}
-      - {name: dq_dimension,            type: STRING,          nullable: true,  comment: "DQ dimension: Validity, Completeness, Uniqueness, Consistency, Accuracy, Timeliness"}
-      - {name: rule_type,               type: STRING,          nullable: true,  comment: "Rule type: ENUM_MEMBERSHIP, NOT_NULL, RANGE_CHECK, etc."}
-      - {name: severity,                type: STRING,          nullable: true,  comment: "HIGH, MEDIUM, or LOW"}
-      - {name: description,             type: STRING,          nullable: true,  comment: "Human-readable rule description"}
-      - {name: rule_logic_sql,          type: STRING,          nullable: true,  comment: "SQL SELECT returning failing rows"}
+      - {name: rule_id,                type: STRING,  nullable: false, description: "DQ rule identifier"}
+      - {name: table_name,             type: STRING,  nullable: true,  description: "Target table for the rule"}
+      - {name: column_name,            type: STRING,  nullable: true,  description: "Target column (NULL = row-level rule)"}
+      - {name: dq_dimension,           type: STRING,  nullable: true,  description: "DQ dimension: Validity, Completeness, Uniqueness, Consistency, Accuracy, Timeliness"}
+      - {name: rule_type,              type: STRING,  nullable: true,  description: "Rule pattern type"}
+      - {name: severity,               type: STRING,  nullable: true,  description: "HIGH, MEDIUM, or LOW"}
+      - {name: description,            type: STRING,  nullable: true,  description: "Human-readable rule description"}
+      - {name: sql,                    type: STRING,  nullable: true,  description: "SQL SELECT returning failing rows"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
 
-  # ─────────────────────────────────────────────
-  # DQ ISSUES CATALOG (Bronze-only metadata — no Silver DQ applied)
-  # ─────────────────────────────────────────────
   - name: dq_issues_catalog
-    source_table: statestreet.b_statestreet.dq_issues_catalog
+    source: statestreet.b_statestreet.dq_issues_catalog
     primary_key: [issue_id]
     scd2: false
+    partition_by: []
     iceberg_uniform: false
-    dq_exempt: true
-    description: "DQ issues/known problems metadata table. Bronze-only per USE-CASE-001. No Silver DQ rules applied. Reference only."
+    notes: "Reference metadata. Bronze-only ingestion per USE-CASE-001. Passed through to Silver as-is — no DQ rules applied."
+    dq_rules_applied: false
     columns:
-      - {name: issue_id,                type: STRING,          nullable: false, comment: "Issue identifier (PK)"}
-      - {name: rule_id,                 type: STRING,          nullable: true,  comment: "FK to dq_rules_catalog.rule_id"}
-      - {name: table_name,              type: STRING,          nullable: true,  comment: "Affected table"}
-      - {name: description,             type: STRING,          nullable: true,  comment: "Issue description and known workaround"}
-      - {name: severity,                type: STRING,          nullable: true,  comment: "HIGH, MEDIUM, or LOW"}
-      - {name: status,                  type: STRING,          nullable: true,  comment: "OPEN, RESOLVED, ACCEPTED"}
+      - {name: issue_id,               type: STRING,  nullable: false, description: "DQ issue identifier"}
+      - {name: rule_id,                type: STRING,  nullable: true,  description: "FK to dq_rules_catalog.rule_id"}
+      - {name: table_name,             type: STRING,  nullable: true,  description: "Table where the issue was detected"}
+      - {name: column_name,            type: STRING,  nullable: true,  description: "Column where the issue was detected"}
+      - {name: issue_description,      type: STRING,  nullable: true,  description: "Description of the specific issue"}
+      - {name: severity,               type: STRING,  nullable: true,  description: "Issue severity level"}
+      - {name: status,                 type: STRING,  nullable: true,  description: "Resolution status (OPEN, RESOLVED, ACCEPTED)"}
     metadata_columns:
-      - {name: _source_file,            type: STRING}
-      - {name: _ingestion_ts,           type: TIMESTAMP}
-      - {name: _batch_id,               type: STRING}
-      - {name: _row_hash,               type: STRING}
-      - {name: _dq_rule_version,        type: STRING}
+      - {name: _ingestion_ts,          type: TIMESTAMP}
+      - {name: _source_file,           type: STRING}
+      - {name: _batch_id,              type: STRING}
+      - {name: _row_hash,              type: STRING}
+
+# ─────────────────────────────────────────────
+# REJECTS TABLE CONVENTION
+# Auto-created alongside every DQ-checked silver table
+# ─────────────────────────────────────────────
+rejects_convention:
+  naming_pattern: "<table_name>_rejects"
+  schema: statestreet.s_statestreet
+  extra_columns:
+    - {name: _rule_id,          type: STRING,    description: "DQ rule that caused rejection"}
+    - {name: _violation_detail, type: STRING,    description: "Human-readable description of what failed"}
+    - {name: _rejected_ts,      type: TIMESTAMP, description: "Timestamp when row was rejected"}
+    - {name: _dq_rule_version,  type: STRING,    description: "SHA256 of silver/rules.yaml at time of DQ check"}
+  tables_with_rejects:
+    - product
+    - legal_entity
+    - currency
+    - series
+    - tick_ladder_scale
+    - tick
+    - stock
+    - common_stock
+    - preferred_stock
+    - fund
+    - right
+    - debt
+    - bond
+    - muni
+    - pool_backed_security
+    - listed_derivative
+    - option
+    - future
+    - identifiers
+    - classification
+    - product_rating
+    - coupon
+    - listed_derivative_tick
+    - debt_principal_redemption_provision
+    - principal_redemption_provision
+    - product_rating_type
+  tables_without_rejects:
+    - generic_product    # No DQ rules — legacy table
+    - dq_rules_catalog   # Metadata pass-through
+    - dq_issues_catalog  # Metadata pass-through
 
 ```
 

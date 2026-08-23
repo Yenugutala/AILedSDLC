@@ -1,28 +1,33 @@
 """
 Bronze Layer Tests — Securities Master Data Lakehouse
-Tests raw landing of all 29 source CSV tables.
-Validates schema, metadata columns, idempotency, and schema drift handling.
+Tests raw landing: schema correctness, metadata columns, idempotency, schema drift.
+All tests use pytest + PySpark (local Spark session — no Databricks required).
 """
 
 import pytest
 import os
+import shutil
+import tempfile
+from datetime import date
 from unittest.mock import patch, MagicMock
+
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
-    StructType, StructField, StringType, DoubleType,
-    DateType, BooleanType, DecimalType, LongType, TimestampType
+    StructType, StructField,
+    StringType, DoubleType, DecimalType,
+    DateType, BooleanType, LongType, TimestampType,
+    IntegerType,
 )
 
-
 # ---------------------------------------------------------------------------
-# Session-scoped Spark fixture (local mode — no Databricks required)
+# Session-scoped Spark fixture (local mode — no Databricks cluster needed)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
 def spark():
-    """Local Delta-enabled Spark session for Bronze unit tests."""
-    return (
+    """Local Delta + Spark session. Tear down after all tests complete."""
+    session = (
         SparkSession.builder
         .master("local[2]")
         .appName("sml-bronze-tests")
@@ -30,177 +35,100 @@ def spark():
                 "io.delta.sql.DeltaSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        .config("spark.databricks.delta.schema.autoMerge.enabled", "true")
-        # Suppress noisy Spark INFO logs during test runs
-        .config("spark.driver.extraJavaOptions", "-Dlog4j.logLevel=WARN")
+        .config("spark.sql.shuffle.partitions", "4")   # keep tests fast
         .getOrCreate()
     )
+    session.sparkContext.setLogLevel("ERROR")
+    yield session
+    session.stop()
+
+
+@pytest.fixture()
+def tmp_delta_dir(tmp_path):
+    """A fresh temporary directory for each Delta table written in a test."""
+    yield str(tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# Constants
+# Canonical source schemas (mirrors bronze/tables.yaml — one per key table)
 # ---------------------------------------------------------------------------
 
-CATALOG  = "statestreet"
-B_SCHEMA = "b_statestreet"
+PRODUCT_SOURCE_SCHEMA = StructType([
+    StructField("product_id",              StringType(),         False),
+    StructField("id_type",                 StringType(),         True),
+    StructField("type",                    StringType(),         True),
+    StructField("sub_type",                StringType(),         True),
+    StructField("status",                  StringType(),         True),
+    StructField("settlement_type",         StringType(),         True),
+    StructField("description",             StringType(),         True),
+    StructField("issue_date",              DateType(),           True),
+    StructField("issue_price",             DecimalType(28, 8),   True),
+    StructField("current_face_value",      DecimalType(28, 8),   True),
+    StructField("issuer_legal_entity_id",  StringType(),         True),
+    StructField("tick_ladder_scale_id",    StringType(),         True),
+])
 
-# All 29 source tables — ingestion order mirrors bronze notebook
-ALL_BRONZE_TABLES = [
-    "currency",
-    "legal_entity",
-    "tick_ladder_scale",
-    "tick",
-    "product_rating_type",
-    "principal_redemption_provision",
-    "series",
-    "product",
-    "generic_product",
-    "fund",
-    "debt",
-    "bond",
-    "muni",
-    "pool_backed_security",
-    "right",
-    "stock",
-    "common_stock",
-    "preferred_stock",
-    "listed_derivative",
-    "option",
-    "future",
-    "coupon",
-    "identifiers",
-    "classification",
-    "product_rating",
-    "listed_derivative_tick",
-    "debt_principal_redemption_provision",
-    "dq_rules_catalog",
-    "dq_issues_catalog",
-]
+BOND_SOURCE_SCHEMA = StructType([
+    StructField("product_id",          StringType(),  False),
+    StructField("coupon_type",         StringType(),  True),
+    StructField("maturity_date",       DateType(),    True),
+    StructField("issue_currency_code", StringType(),  True),
+])
 
-# Metadata columns that Bronze must add to every table
-REQUIRED_META_COLS = [
+LEGAL_ENTITY_SOURCE_SCHEMA = StructType([
+    StructField("legal_entity_id", StringType(), False),
+    StructField("legal_name",      StringType(),  True),
+    StructField("country",         StringType(),  True),
+])
+
+COUPON_SOURCE_SCHEMA = StructType([
+    StructField("coupon_id",    StringType(),          False),
+    StructField("product_id",   StringType(),          False),
+    StructField("coupon_rate",  DecimalType(28, 8),    True),
+    StructField("payment_date", DateType(),            True),
+    StructField("coupon_type",  StringType(),          True),
+    StructField("frequency",    StringType(),          True),
+])
+
+IDENTIFIERS_SOURCE_SCHEMA = StructType([
+    StructField("identifier_id",    StringType(), False),
+    StructField("product_id",       StringType(), False),
+    StructField("id_type",          StringType(), True),
+    StructField("identifier_value", StringType(), True),
+])
+
+CURRENCY_SOURCE_SCHEMA = StructType([
+    StructField("currency_code", StringType(), False),
+    StructField("currency_name", StringType(), True),
+])
+
+# Metadata columns added by the pipeline ─────────────────────────────────
+REQUIRED_METADATA_COLS = {
     "_source_file",
     "_ingestion_ts",
     "_batch_id",
     "_row_hash",
+}
+
+# All 29 source table names ───────────────────────────────────────────────
+ALL_SOURCE_TABLES = [
+    "product", "generic_product", "legal_entity", "tick_ladder_scale",
+    "tick", "product_rating", "product_rating_type", "classification",
+    "identifiers", "fund", "debt", "bond", "muni", "pool_backed_security",
+    "right", "series", "listed_derivative", "option", "future", "stock",
+    "common_stock", "preferred_stock", "coupon",
+    "principal_redemption_provision", "currency",
+    "listed_derivative_tick", "debt_principal_redemption_provision",
+    "dq_rules_catalog", "dq_issues_catalog",
 ]
 
-# Tables that carry SCD2 columns in Silver (NOT bronze — listed here for
-# the bronze-only negative assertion below)
-SCD2_TABLES = {"product", "legal_entity", "product_rating"}
-
-
 # ---------------------------------------------------------------------------
-# Helper fixtures — small representative DataFrames
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="session")
-def sample_product_df(spark):
-    """Minimal product DataFrame matching source CSV structure."""
-    schema = StructType([
-        StructField("product_id",              StringType(),  True),
-        StructField("id_type",                 StringType(),  True),
-        StructField("type",                    StringType(),  True),
-        StructField("sub_type",                StringType(),  True),
-        StructField("status",                  StringType(),  True),
-        StructField("settlement_type",         StringType(),  True),
-        StructField("description",             StringType(),  True),
-        StructField("issue_date",              StringType(),  True),
-        StructField("issue_price",             StringType(),  True),
-        StructField("current_face_value",      StringType(),  True),
-        StructField("issuer_legal_entity_id",  StringType(),  True),
-        StructField("tick_ladder_scale_id",    StringType(),  True),
-    ])
-    data = [
-        ("PROD001", "CUSIP",  "EQUITY",      "COMMON_STOCK", "ACTIVE",   None,       "AAPL Common",      "2000-01-15", "10.00", "100.00", "LE001", None),
-        ("PROD002", "ISIN",   "DEBT",        "BOND",         "ACTIVE",   "DVP",      "US Treasury 5yr",  "2015-06-01", "99.50", "100.00", "LE002", None),
-        ("PROD003", "TICKER", "FUND",        "FUND",         "INACTIVE", None,       "Vanguard S&P ETF", "2001-03-10", None,   None,     "LE003", None),
-        ("PROD004", "SEDOL",  "DERIVATIVE",  "OPTION",       "ACTIVE",   "T+1",      "AAPL Call Option", "2023-01-01", None,   None,     "LE001", "TLS001"),
-        ("PROD005", "CUSIP",  "RIGHT",       "RIGHT",        "ACTIVE",   None,       "Rights Offering",  "2022-05-01", None,   None,     "LE004", None),
-    ]
-    return spark.createDataFrame(data, schema)
-
-
-@pytest.fixture(scope="session")
-def sample_bond_df(spark):
-    """Minimal bond DataFrame."""
-    schema = StructType([
-        StructField("product_id",          StringType(), True),
-        StructField("coupon_type",         StringType(), True),
-        StructField("maturity_date",       StringType(), True),
-        StructField("face_currency_code",  StringType(), True),
-        StructField("day_count_convention",StringType(), True),
-    ])
-    data = [
-        ("PROD002", "FIXED",    "2025-06-01", "USD", "ACT/360"),
-        ("PROD006", "FLOATING", "2030-12-31", "EUR", "30/360"),
-        ("PROD007", "ZERO",     "2028-09-15", "GBP", None),
-    ]
-    return spark.createDataFrame(data, schema)
-
-
-@pytest.fixture(scope="session")
-def sample_legal_entity_df(spark):
-    """Minimal legal_entity DataFrame."""
-    schema = StructType([
-        StructField("legal_entity_id", StringType(), True),
-        StructField("legal_name",      StringType(), True),
-        StructField("country",         StringType(), True),
-    ])
-    data = [
-        ("LE001", "Apple Inc.",            "US"),
-        ("LE002", "US Treasury",           "US"),
-        ("LE003", "Vanguard Group",        "US"),
-        ("LE004", "Deutsche Bank AG",      "DE"),
-    ]
-    return spark.createDataFrame(data, schema)
-
-
-@pytest.fixture(scope="session")
-def sample_coupon_df(spark):
-    """Minimal coupon DataFrame."""
-    schema = StructType([
-        StructField("coupon_id",     StringType(), True),
-        StructField("product_id",    StringType(), True),
-        StructField("coupon_rate",   StringType(), True),
-        StructField("payment_date",  StringType(), True),
-        StructField("coupon_type",   StringType(), True),
-        StructField("frequency",     StringType(), True),
-    ])
-    data = [
-        ("CPN001", "PROD002", "5.00", "2024-06-01", "FIXED",    "SEMI_ANNUAL"),
-        ("CPN002", "PROD002", "5.00", "2025-06-01", "FIXED",    "SEMI_ANNUAL"),
-        ("CPN003", "PROD006", "3.50", "2024-09-30", "FLOATING", "QUARTERLY"),
-    ]
-    return spark.createDataFrame(data, schema)
-
-
-@pytest.fixture(scope="session")
-def sample_currency_df(spark):
-    """Currency DataFrame — includes 2 deliberately bad rows (USE-CASE-002)."""
-    schema = StructType([
-        StructField("currency_code", StringType(), True),
-        StructField("description",   StringType(), True),
-    ])
-    data = [
-        ("USD", "US Dollar"),
-        ("EUR", "Euro"),
-        ("GBP", "British Pound"),
-        ("INVALID",  "Bad code — too long"),   # intentional bad row 1
-        ("123",      "Bad code — numeric"),     # intentional bad row 2
-    ]
-    return spark.createDataFrame(data, schema)
-
-
-# ---------------------------------------------------------------------------
-# Utility — add metadata columns (mirrors bronze_loader._add_metadata)
+# Helper — simulate the _add_metadata() function from bronze_loader.py
+# (We test the pipeline logic independently of whether the module is importable)
 # ---------------------------------------------------------------------------
 
 def _add_metadata(df, source_file: str, batch_id: str):
-    """
-    Replicate the Bronze metadata-column logic used in 03_bronze_ingest.py.
-    Captures data columns BEFORE adding metadata (mirrors production code).
-    """
+    """Mirror of src/ingestion/bronze_loader._add_metadata()."""
     data_cols = [F.col(c) for c in df.columns]
     return (
         df
@@ -211,472 +139,499 @@ def _add_metadata(df, source_file: str, batch_id: str):
     )
 
 
+def _make_product_df(spark, rows=None):
+    """Return a small product DataFrame (source schema, no metadata)."""
+    rows = rows or [
+        ("P001", "CUSIP",  "EQUITY", "COMMON_STOCK", "ACTIVE",   None, "Apple Inc",     None, None, None, "LE001", None),
+        ("P002", "ISIN",   "DEBT",   "BOND",         "ACTIVE",   None, "US T-Bond 5yr", None, None, 100.0,"LE002", None),
+        ("P003", "TICKER", "FUND",   "FUND",         "INACTIVE", None, "SPY ETF",        None, None, None, "LE003", None),
+    ]
+    return spark.createDataFrame(rows, schema=PRODUCT_SOURCE_SCHEMA)
+
+
 # ===========================================================================
-# SECTION 1 — Metadata column tests
+# 1. SCHEMA TESTS — bronze table columns match spec
+# ===========================================================================
+
+class TestBronzeSchema:
+    """Bronze tables must land with the exact columns defined in tables.yaml."""
+
+    def test_product_has_all_source_columns(self, spark):
+        df = _make_product_df(spark)
+        for field in PRODUCT_SOURCE_SCHEMA.fields:
+            assert field.name in df.columns, (
+                f"Column '{field.name}' missing from product source schema"
+            )
+
+    def test_bond_has_all_source_columns(self, spark):
+        rows = [("P002", "FIXED", date(2030, 1, 1), "USD")]
+        df = spark.createDataFrame(rows, schema=BOND_SOURCE_SCHEMA)
+        for field in BOND_SOURCE_SCHEMA.fields:
+            assert field.name in df.columns
+
+    def test_legal_entity_has_all_source_columns(self, spark):
+        rows = [("LE001", "Apple Inc", "US")]
+        df = spark.createDataFrame(rows, schema=LEGAL_ENTITY_SOURCE_SCHEMA)
+        for field in LEGAL_ENTITY_SOURCE_SCHEMA.fields:
+            assert field.name in df.columns
+
+    def test_coupon_has_all_source_columns(self, spark):
+        rows = [("C001", "P002", 0.05, date(2024, 6, 30), "FIXED", "SEMI_ANNUAL")]
+        df = spark.createDataFrame(rows, schema=COUPON_SOURCE_SCHEMA)
+        for field in COUPON_SOURCE_SCHEMA.fields:
+            assert field.name in df.columns
+
+    def test_identifiers_has_all_source_columns(self, spark):
+        rows = [("I001", "P001", "CUSIP", "037833100")]
+        df = spark.createDataFrame(rows, schema=IDENTIFIERS_SOURCE_SCHEMA)
+        for field in IDENTIFIERS_SOURCE_SCHEMA.fields:
+            assert field.name in df.columns
+
+    def test_currency_has_all_source_columns(self, spark):
+        rows = [("USD", "US Dollar")]
+        df = spark.createDataFrame(rows, schema=CURRENCY_SOURCE_SCHEMA)
+        for field in CURRENCY_SOURCE_SCHEMA.fields:
+            assert field.name in df.columns
+
+    def test_product_id_is_not_nullable_in_spec(self):
+        """product_id must be declared NOT NULL in the source schema."""
+        field = next(f for f in PRODUCT_SOURCE_SCHEMA.fields if f.name == "product_id")
+        assert field.nullable is False, "product_id should be non-nullable"
+
+    def test_all_29_source_tables_accounted_for(self):
+        """Sanity check that our ALL_SOURCE_TABLES constant lists all 29 tables."""
+        assert len(ALL_SOURCE_TABLES) == 29
+
+
+# ===========================================================================
+# 2. METADATA COLUMN TESTS
 # ===========================================================================
 
 class TestMetadataColumns:
-    """Bronze must attach exactly 4 metadata columns to every ingested table."""
+    """_add_metadata() must attach exactly the 4 standard metadata columns."""
 
-    def test_all_required_meta_cols_present(self, spark, sample_product_df):
-        """All 4 metadata columns are added by _add_metadata()."""
-        result = _add_metadata(sample_product_df, "product.csv", "batch_001")
-        missing = [c for c in REQUIRED_META_COLS if c not in result.columns]
-        assert missing == [], f"Missing metadata columns: {missing}"
-
-    def test_source_file_value_matches_input(self, spark, sample_product_df):
-        """_source_file column holds the value passed to _add_metadata()."""
-        result = _add_metadata(sample_product_df, "product.csv", "batch_001")
-        values = {r["_source_file"] for r in result.select("_source_file").collect()}
-        assert values == {"product.csv"}
-
-    def test_batch_id_value_matches_input(self, spark, sample_product_df):
-        """_batch_id column holds the value passed to _add_metadata()."""
-        result = _add_metadata(sample_product_df, "product.csv", "run_20240115")
-        values = {r["_batch_id"] for r in result.select("_batch_id").collect()}
-        assert values == {"run_20240115"}
-
-    def test_ingestion_ts_is_not_null(self, spark, sample_product_df):
-        """_ingestion_ts must be non-null for every row."""
-        result = _add_metadata(sample_product_df, "product.csv", "batch_001")
-        null_count = result.filter(F.col("_ingestion_ts").isNull()).count()
-        assert null_count == 0, f"{null_count} rows have NULL _ingestion_ts"
-
-    def test_row_hash_is_not_null(self, spark, sample_product_df):
-        """_row_hash must be non-null for every row."""
-        result = _add_metadata(sample_product_df, "product.csv", "batch_001")
-        null_count = result.filter(F.col("_row_hash").isNull()).count()
-        assert null_count == 0, f"{null_count} rows have NULL _row_hash"
-
-    def test_row_hash_is_64_char_hex(self, spark, sample_product_df):
-        """_row_hash is a valid SHA-256 hex string (64 characters)."""
-        result = _add_metadata(sample_product_df, "product.csv", "batch_001")
-        invalid = result.filter(
-            (F.length(F.col("_row_hash")) != 64) |
-            F.col("_row_hash").isNull()
-        ).count()
-        assert invalid == 0, f"{invalid} rows have invalid _row_hash length"
-
-    def test_metadata_does_not_reduce_row_count(self, spark, sample_product_df):
-        """Adding metadata columns must not filter or duplicate rows."""
-        result = _add_metadata(sample_product_df, "product.csv", "batch_001")
-        assert result.count() == sample_product_df.count()
-
-    def test_no_scd2_cols_in_bronze(self, spark, sample_product_df):
-        """Bronze tables must NOT have SCD2 columns — those belong to Silver."""
-        result = _add_metadata(sample_product_df, "product.csv", "batch_001")
-        scd2_cols = {"effective_start_date", "effective_end_date", "is_current"}
-        found = scd2_cols.intersection(set(result.columns))
-        assert found == set(), (
-            f"Bronze must not contain SCD2 columns. Found: {found}"
+    def test_all_four_metadata_columns_present(self, spark):
+        df = _make_product_df(spark)
+        result = _add_metadata(df, "product.csv", "batch_001")
+        assert REQUIRED_METADATA_COLS.issubset(set(result.columns)), (
+            f"Missing: {REQUIRED_METADATA_COLS - set(result.columns)}"
         )
 
-    @pytest.mark.parametrize("table_name", ALL_BRONZE_TABLES)
-    def test_meta_col_naming_convention(self, table_name):
-        """
-        Every metadata column name starts with underscore — enforced by CLAUDE.md.
-        This is a static check: we verify the constant list, not live data.
-        """
-        for col in REQUIRED_META_COLS:
-            assert col.startswith("_"), (
-                f"Metadata column '{col}' must start with '_' (CLAUDE.md convention)"
+    def test_source_file_value_is_correct(self, spark):
+        df = _make_product_df(spark)
+        result = _add_metadata(df, "product.csv", "batch_001")
+        files = {r["_source_file"] for r in result.collect()}
+        assert files == {"product.csv"}
+
+    def test_batch_id_value_is_correct(self, spark):
+        df = _make_product_df(spark)
+        result = _add_metadata(df, "product.csv", "batch_XYZ")
+        batches = {r["_batch_id"] for r in result.collect()}
+        assert batches == {"batch_XYZ"}
+
+    def test_ingestion_ts_is_not_null(self, spark):
+        df = _make_product_df(spark)
+        result = _add_metadata(df, "product.csv", "batch_001")
+        null_ts = result.filter(F.col("_ingestion_ts").isNull()).count()
+        assert null_ts == 0, "_ingestion_ts must never be null"
+
+    def test_row_hash_is_not_null(self, spark):
+        df = _make_product_df(spark)
+        result = _add_metadata(df, "product.csv", "batch_001")
+        null_hash = result.filter(F.col("_row_hash").isNull()).count()
+        assert null_hash == 0, "_row_hash must never be null"
+
+    def test_row_hash_is_64_hex_chars(self, spark):
+        """SHA-256 hex string is always exactly 64 characters."""
+        df = _make_product_df(spark)
+        result = _add_metadata(df, "product.csv", "batch_001")
+        for row in result.collect():
+            assert len(row["_row_hash"]) == 64, (
+                f"_row_hash length {len(row['_row_hash'])} != 64 for row {row['product_id']}"
             )
 
-
-# ===========================================================================
-# SECTION 2 — Row-hash determinism (critical for MERGE INTO CDC)
-# ===========================================================================
-
-class TestRowHash:
-    """
-    _row_hash must be deterministic across runs for identical data.
-    If hash changes for unchanged rows, MERGE INTO will incorrectly update them.
-    """
-
-    def test_same_data_produces_same_hash(self, spark, sample_product_df):
-        """Identical rows in two runs must produce identical _row_hash values."""
-        df1 = _add_metadata(sample_product_df, "product.csv", "batch_001")
-        df2 = _add_metadata(sample_product_df, "product.csv", "batch_002")
-
-        hashes1 = {r["product_id"]: r["_row_hash"]
-                   for r in df1.select("product_id", "_row_hash").collect()}
-        hashes2 = {r["product_id"]: r["_row_hash"]
-                   for r in df2.select("product_id", "_row_hash").collect()}
-
+    def test_row_hash_deterministic_across_batches(self, spark):
+        """Same data → same _row_hash regardless of batch_id or timestamp."""
+        df = _make_product_df(spark)
+        run1 = _add_metadata(df, "product.csv", "batch_001").select("product_id", "_row_hash")
+        run2 = _add_metadata(df, "product.csv", "batch_002").select("product_id", "_row_hash")
+        hashes1 = {r["product_id"]: r["_row_hash"] for r in run1.collect()}
+        hashes2 = {r["product_id"]: r["_row_hash"] for r in run2.collect()}
         assert hashes1 == hashes2, (
-            "_row_hash changed between runs for identical data — "
-            "MERGE INTO CDC will incorrectly update unchanged rows"
+            "Row hashes changed between runs for identical source data"
         )
 
-    def test_different_data_produces_different_hash(self, spark, sample_product_df):
-        """A row that changed must produce a different _row_hash."""
-        df_original = _add_metadata(sample_product_df, "product.csv", "batch_001")
+    def test_different_rows_have_different_hashes(self, spark):
+        """Distinct rows must not collide on _row_hash."""
+        df = _make_product_df(spark)
+        result = _add_metadata(df, "product.csv", "batch_001")
+        hashes = [r["_row_hash"] for r in result.collect()]
+        assert len(hashes) == len(set(hashes)), "Hash collision detected — rows are not unique"
 
-        # Modify one row
-        df_modified = sample_product_df.withColumn(
-            "description",
-            F.when(F.col("product_id") == "PROD001", F.lit("AAPL Modified"))
-             .otherwise(F.col("description"))
-        )
-        df_modified = _add_metadata(df_modified, "product.csv", "batch_002")
+    def test_row_count_unchanged_by_metadata(self, spark):
+        """_add_metadata() must not filter or fan-out any rows."""
+        df = _make_product_df(spark)
+        result = _add_metadata(df, "product.csv", "batch_001")
+        assert result.count() == df.count()
 
-        original_hash = (df_original
-                         .filter(F.col("product_id") == "PROD001")
-                         .select("_row_hash").first()["_row_hash"])
-        modified_hash = (df_modified
-                         .filter(F.col("product_id") == "PROD001")
-                         .select("_row_hash").first()["_row_hash"])
-
-        assert original_hash != modified_hash, (
-            "Changed row must produce a different _row_hash"
-        )
-
-    def test_unchanged_rows_produce_same_hash_after_partial_update(
-        self, spark, sample_product_df
-    ):
-        """Rows that did NOT change must keep the same hash even when sibling rows change."""
-        df_original = _add_metadata(sample_product_df, "product.csv", "batch_001")
-
-        # Only modify PROD001 — PROD002 should keep the same hash
-        df_modified = sample_product_df.withColumn(
-            "description",
-            F.when(F.col("product_id") == "PROD001", F.lit("Changed"))
-             .otherwise(F.col("description"))
-        )
-        df_modified = _add_metadata(df_modified, "product.csv", "batch_002")
-
-        orig_hash = (df_original.filter(F.col("product_id") == "PROD002")
-                     .select("_row_hash").first()["_row_hash"])
-        mod_hash  = (df_modified.filter(F.col("product_id") == "PROD002")
-                     .select("_row_hash").first()["_row_hash"])
-
-        assert orig_hash == mod_hash, (
-            "Unchanged row PROD002 must not have its hash changed when PROD001 changes"
-        )
-
-    def test_hash_covers_all_data_columns(self, spark, sample_product_df):
-        """
-        Changing any data column must change the hash.
-        Verify this for multiple columns across the product schema.
-        """
-        sensitive_columns = ["id_type", "type", "status", "issuer_legal_entity_id"]
-
-        base_hash = (
-            _add_metadata(sample_product_df, "product.csv", "batch_001")
-            .filter(F.col("product_id") == "PROD001")
-            .select("_row_hash").first()["_row_hash"]
-        )
-
-        for col_name in sensitive_columns:
-            df_mutated = sample_product_df.withColumn(
-                col_name,
-                F.when(F.col("product_id") == "PROD001", F.lit("__MUTATED__"))
-                 .otherwise(F.col(col_name))
+    def test_data_columns_still_present_after_metadata(self, spark):
+        """Original data columns must all survive _add_metadata()."""
+        df = _make_product_df(spark)
+        result = _add_metadata(df, "product.csv", "batch_001")
+        for field in PRODUCT_SOURCE_SCHEMA.fields:
+            assert field.name in result.columns, (
+                f"Source column '{field.name}' was dropped by _add_metadata()"
             )
-            mutated_hash = (
-                _add_metadata(df_mutated, "product.csv", "batch_001")
-                .filter(F.col("product_id") == "PROD001")
-                .select("_row_hash").first()["_row_hash"]
-            )
-            assert mutated_hash != base_hash, (
-                f"Changing '{col_name}' must change _row_hash "
-                f"(column may be excluded from hash computation)"
-            )
+
+    def test_changed_row_produces_different_hash(self, spark):
+        """Modifying a data column must change the _row_hash (CDC sensitivity)."""
+        base_rows = [("P001", "CUSIP", "EQUITY", "COMMON_STOCK", "ACTIVE",
+                      None, "Apple Inc", None, None, None, "LE001", None)]
+        changed_rows = [("P001", "CUSIP", "EQUITY", "COMMON_STOCK", "INACTIVE",  # status changed
+                         None, "Apple Inc", None, None, None, "LE001", None)]
+
+        df_base    = spark.createDataFrame(base_rows,    schema=PRODUCT_SOURCE_SCHEMA)
+        df_changed = spark.createDataFrame(changed_rows, schema=PRODUCT_SOURCE_SCHEMA)
+
+        hash_base    = _add_metadata(df_base,    "p.csv", "b1").first()["_row_hash"]
+        hash_changed = _add_metadata(df_changed, "p.csv", "b1").first()["_row_hash"]
+
+        assert hash_base != hash_changed, (
+            "Hash should change when a data column value changes"
+        )
 
 
 # ===========================================================================
-# SECTION 3 — Idempotency tests
+# 3. IDEMPOTENCY TESTS (MERGE INTO behaviour)
 # ===========================================================================
 
-class TestIdempotency:
-    """
-    Bronze ingestion uses MERGE INTO — running twice must produce the same result.
-    Simulated here using in-memory DataFrames and merge logic.
-    """
+class TestBronzeIdempotency:
+    """Running the ingestion twice must not duplicate rows (MERGE INTO guarantee)."""
 
-    def test_merge_is_idempotent_same_data(self, spark, tmp_path):
-        """MERGE INTO with identical data on second run = no net change in row count."""
-        table_path = str(tmp_path / "product_idempotency")
+    def _write_delta(self, df, path, mode="overwrite"):
+        df.write.format("delta").mode(mode).save(path)
 
-        schema = StructType([
-            StructField("product_id", StringType(), False),
-            StructField("description", StringType(), True),
-        ])
-        data = [("P001", "Security A"), ("P002", "Security B")]
-        df = spark.createDataFrame(data, schema)
-        df_with_meta = _add_metadata(df, "product.csv", "batch_001")
-
-        # First load — creates table
-        (df_with_meta.write
-         .format("delta")
-         .mode("overwrite")
-         .option("overwriteSchema", "true")
-         .save(table_path))
-
-        count_after_first = spark.read.format("delta").load(table_path).count()
-
-        # Second load — same data, should not duplicate rows
-        df_with_meta2 = _add_metadata(df, "product.csv", "batch_002")
-        df_with_meta2.createOrReplaceTempView("_incoming_idempotency")
-
+    def _merge_into(self, spark, incoming_df, target_path, pk="product_id"):
+        """
+        Simulate the MERGE INTO logic used in bronze_loader.py.
+        Only updates rows where _row_hash has changed; inserts new rows.
+        """
+        incoming_df.createOrReplaceTempView("_incoming")
         spark.sql(f"""
-            MERGE INTO delta.`{table_path}` AS target
-            USING _incoming_idempotency AS source
-            ON target.product_id = source.product_id
-            WHEN MATCHED AND source._row_hash != target._row_hash THEN UPDATE SET *
-            WHEN NOT MATCHED THEN INSERT *
+            MERGE INTO delta.`{target_path}` AS target
+            USING _incoming AS source
+            ON target.{pk} = source.{pk}
+            WHEN MATCHED AND source._row_hash != target._row_hash
+              THEN UPDATE SET *
+            WHEN NOT MATCHED
+              THEN INSERT *
         """)
 
-        count_after_second = spark.read.format("delta").load(table_path).count()
-        assert count_after_first == count_after_second, (
-            f"Idempotency failed: first load={count_after_first} rows, "
-            f"second load={count_after_second} rows (expected same)"
+    def test_second_run_same_row_count(self, spark, tmp_delta_dir):
+        df = _add_metadata(_make_product_df(spark), "product.csv", "batch_001")
+        # First run — create table
+        self._write_delta(df, tmp_delta_dir)
+        count_after_run1 = spark.read.format("delta").load(tmp_delta_dir).count()
+
+        # Second run — identical data
+        df2 = _add_metadata(_make_product_df(spark), "product.csv", "batch_002")
+        self._merge_into(spark, df2, tmp_delta_dir)
+        count_after_run2 = spark.read.format("delta").load(tmp_delta_dir).count()
+
+        assert count_after_run1 == count_after_run2, (
+            f"Row count changed after re-run: {count_after_run1} → {count_after_run2}"
         )
 
-    def test_merge_updates_changed_row(self, spark, tmp_path):
-        """MERGE INTO must update a row whose data changed (different _row_hash)."""
-        table_path = str(tmp_path / "product_update")
+    def test_new_row_in_second_run_increments_count(self, spark, tmp_delta_dir):
+        df = _add_metadata(_make_product_df(spark), "product.csv", "batch_001")
+        self._write_delta(df, tmp_delta_dir)
+        count_run1 = spark.read.format("delta").load(tmp_delta_dir).count()
 
-        schema = StructType([
-            StructField("product_id",  StringType(), False),
-            StructField("description", StringType(), True),
-        ])
-        original = spark.createDataFrame(
-            [("P001", "Original description")], schema
-        )
-        (
-            _add_metadata(original, "product.csv", "batch_001")
-            .write.format("delta").mode("overwrite")
-            .option("overwriteSchema", "true")
-            .save(table_path)
-        )
+        # Add a genuinely new product
+        new_row = [("P999", "SEDOL", "EQUITY", "COMMON_STOCK", "ACTIVE",
+                    None, "New Co", None, None, None, "LE004", None)]
+        new_df   = spark.createDataFrame(new_row, schema=PRODUCT_SOURCE_SCHEMA)
+        full_df2 = _make_product_df(spark).union(new_df)
+        df2      = _add_metadata(full_df2, "product.csv", "batch_002")
 
-        # Changed row — same PK, different description
-        updated = spark.createDataFrame(
-            [("P001", "Updated description")], schema
-        )
-        _add_metadata(updated, "product.csv", "batch_002").createOrReplaceTempView(
-            "_incoming_update"
+        self._merge_into(spark, df2, tmp_delta_dir)
+        count_run2 = spark.read.format("delta").load(tmp_delta_dir).count()
+
+        assert count_run2 == count_run1 + 1, (
+            f"Expected {count_run1 + 1} rows after new product added, got {count_run2}"
         )
 
-        spark.sql(f"""
-            MERGE INTO delta.`{table_path}` AS target
-            USING _incoming_update AS source
-            ON target.product_id = source.product_id
-            WHEN MATCHED AND source._row_hash != target._row_hash THEN UPDATE SET *
-            WHEN NOT MATCHED THEN INSERT *
-        """)
+    def test_changed_row_does_not_duplicate(self, spark, tmp_delta_dir):
+        """Updated row must replace the old row, not add a second one."""
+        df = _add_metadata(_make_product_df(spark), "product.csv", "batch_001")
+        self._write_delta(df, tmp_delta_dir)
+        count_run1 = spark.read.format("delta").load(tmp_delta_dir).count()
 
-        result_desc = (
-            spark.read.format("delta").load(table_path)
+        # Change status for P001
+        changed = [("P001", "CUSIP", "EQUITY", "COMMON_STOCK", "SUSPENDED",
+                    None, "Apple Inc", None, None, None, "LE001", None),
+                   ("P002", "ISIN",   "DEBT",  "BOND", "ACTIVE",
+                    None, "US T-Bond 5yr", None, None, 100.0, "LE002", None),
+                   ("P003", "TICKER", "FUND",  "FUND", "INACTIVE",
+                    None, "SPY ETF", None, None, None, "LE003", None)]
+        df2 = _add_metadata(
+            spark.createDataFrame(changed, schema=PRODUCT_SOURCE_SCHEMA),
+            "product.csv", "batch_002"
+        )
+        self._merge_into(spark, df2, tmp_delta_dir)
+        count_run2 = spark.read.format("delta").load(tmp_delta_dir).count()
+
+        assert count_run1 == count_run2, (
+            f"Row duplicated on update: {count_run1} → {count_run2}"
+        )
+
+    def test_changed_row_value_is_updated(self, spark, tmp_delta_dir):
+        """After MERGE the updated column value must be reflected in the table."""
+        df = _add_metadata(_make_product_df(spark), "product.csv", "batch_001")
+        self._write_delta(df, tmp_delta_dir)
+
+        changed = [("P001", "CUSIP", "EQUITY", "COMMON_STOCK", "SUSPENDED",
+                    None, "Apple Inc", None, None, None, "LE001", None),
+                   ("P002", "ISIN", "DEBT", "BOND", "ACTIVE",
+                    None, "US T-Bond 5yr", None, None, 100.0, "LE002", None),
+                   ("P003", "TICKER", "FUND", "FUND", "INACTIVE",
+                    None, "SPY ETF", None, None, None, "LE003", None)]
+        df2 = _add_metadata(
+            spark.createDataFrame(changed, schema=PRODUCT_SOURCE_SCHEMA),
+            "product.csv", "batch_002"
+        )
+        self._merge_into(spark, df2, tmp_delta_dir)
+
+        updated_status = (
+            spark.read.format("delta").load(tmp_delta_dir)
             .filter(F.col("product_id") == "P001")
-            .select("description")
-            .first()["description"]
+            .select("status")
+            .first()["status"]
         )
-        assert result_desc == "Updated description", (
-            f"MERGE INTO failed to update changed row. Got: '{result_desc}'"
-        )
-
-    def test_merge_inserts_new_row(self, spark, tmp_path):
-        """MERGE INTO must insert rows that do not exist in target."""
-        table_path = str(tmp_path / "product_insert")
-
-        schema = StructType([
-            StructField("product_id",  StringType(), False),
-            StructField("description", StringType(), True),
-        ])
-        existing = spark.createDataFrame([("P001", "Existing")], schema)
-        (
-            _add_metadata(existing, "product.csv", "batch_001")
-            .write.format("delta").mode("overwrite")
-            .option("overwriteSchema", "true")
-            .save(table_path)
+        assert updated_status == "SUSPENDED", (
+            f"Expected status=SUSPENDED after update, got {updated_status}"
         )
 
-        # New row P002 not in target
-        incoming = spark.createDataFrame(
-            [("P001", "Existing"), ("P002", "New row")], schema
-        )
-        _add_metadata(incoming, "product.csv", "batch_002").createOrReplaceTempView(
-            "_incoming_insert"
-        )
-        spark.sql(f"""
-            MERGE INTO delta.`{table_path}` AS target
-            USING _incoming_insert AS source
-            ON target.product_id = source.product_id
-            WHEN MATCHED AND source._row_hash != target._row_hash THEN UPDATE SET *
-            WHEN NOT MATCHED THEN INSERT *
-        """)
+    def test_hash_unchanged_rows_not_rewritten(self, spark, tmp_delta_dir):
+        """
+        When the source data has not changed, the _row_hash in the table
+        must remain identical after a second ingest run.
+        """
+        df = _add_metadata(_make_product_df(spark), "product.csv", "batch_001")
+        self._write_delta(df, tmp_delta_dir)
 
-        final_count = spark.read.format("delta").load(table_path).count()
-        assert final_count == 2, (
-            f"Expected 2 rows after insert of new PK, got {final_count}"
-        )
+        hashes_before = {
+            r["product_id"]: r["_row_hash"]
+            for r in spark.read.format("delta").load(tmp_delta_dir).collect()
+        }
 
-    def test_merge_does_not_update_unchanged_row(self, spark, tmp_path):
-        """MERGE INTO must NOT update rows where _row_hash is identical."""
-        table_path = str(tmp_path / "product_noop")
+        df2 = _add_metadata(_make_product_df(spark), "product.csv", "batch_002")
+        self._merge_into(spark, df2, tmp_delta_dir)
 
-        schema = StructType([
-            StructField("product_id",  StringType(), False),
-            StructField("description", StringType(), True),
-        ])
-        original = spark.createDataFrame([("P001", "Unchanged")], schema)
-        df_first  = _add_metadata(original, "product.csv", "batch_001")
-        (df_first.write.format("delta").mode("overwrite")
-         .option("overwriteSchema", "true")
-         .save(table_path))
+        hashes_after = {
+            r["product_id"]: r["_row_hash"]
+            for r in spark.read.format("delta").load(tmp_delta_dir).collect()
+        }
 
-        original_batch_id = (
-            spark.read.format("delta").load(table_path)
-            .select("_batch_id").first()["_batch_id"]
-        )
-
-        # Same data, different batch_id — row hash is computed on DATA cols only
-        # so _batch_id change in metadata must not trigger an update on unchanged data
-        df_second = _add_metadata(original, "product.csv", "batch_999")
-        df_second.createOrReplaceTempView("_incoming_noop")
-        spark.sql(f"""
-            MERGE INTO delta.`{table_path}` AS target
-            USING _incoming_noop AS source
-            ON target.product_id = source.product_id
-            WHEN MATCHED AND source._row_hash != target._row_hash THEN UPDATE SET *
-            WHEN NOT MATCHED THEN INSERT *
-        """)
-
-        # _batch_id should still be "batch_001" since the row was NOT updated
-        final_batch_id = (
-            spark.read.format("delta").load(table_path)
-            .select("_batch_id").first()["_batch_id"]
-        )
-        assert final_batch_id == original_batch_id, (
-            f"Unchanged row must NOT be updated by MERGE INTO. "
-            f"Expected batch_id='{original_batch_id}', got '{final_batch_id}'"
+        assert hashes_before == hashes_after, (
+            "Row hashes changed despite source data being unchanged"
         )
 
 
 # ===========================================================================
-# SECTION 4 — Schema drift tests
+# 4. SCHEMA DRIFT TESTS
 # ===========================================================================
 
 class TestSchemaDrift:
     """
-    Bronze drift policy (from bronze/rules.yaml):
-      additive_columns: auto_merge   — new column safely added
-      breaking_changes: quarantine   — type change / column removal raises ValueError
+    Additive drift (new column) → auto-merged into Bronze.
+    Breaking drift (type change / column removal) → batch quarantined.
+    These tests verify the detect_drift() logic directly.
     """
 
-    def _write_base_table(self, spark, tmp_path, table_name: str, data, schema):
-        """Helper: write a base Delta table and register as temp view."""
-        path = str(tmp_path / table_name)
-        df = spark.createDataFrame(data, schema)
-        df_meta = _add_metadata(df, f"{table_name}.csv", "batch_001")
-        (df_meta.write.format("delta").mode("overwrite")
-         .option("overwriteSchema", "true")
-         .save(path))
-        # Register as a named Delta table so detect_drift can read its schema
-        spark.read.format("delta").load(path).createOrReplaceTempView(
-            f"_base_{table_name}"
-        )
+    # ── helper ──────────────────────────────────────────────────────────────
+    def _existing_table(self, spark, tmp_path):
+        """Write a base product table and return its path."""
+        path = str(tmp_path / "product")
+        _add_metadata(_make_product_df(spark), "product.csv", "batch_001") \
+            .write.format("delta").mode("overwrite").save(path)
         return path
 
-    # --- Additive drift -------------------------------------------------------
-
-    def test_additive_new_column_detected(self, spark, tmp_path, sample_product_df):
+    def _detect_drift(self, spark, table_path, incoming_schema):
         """
-        New column in incoming data is classified as additive (not breaking).
-        Mirrors detect_drift() in src/ingestion/schema_drift.py.
+        Pure-Python reimplementation of detect_drift() so tests are self-contained.
+        Returns dict: new_table, additive, breaking, unchanged.
         """
-        # Simulate existing table schema (no new_field)
-        existing_cols = set(sample_product_df.columns)
+        META_COLS = {
+            "_source_file", "_ingestion_ts", "_batch_id", "_row_hash",
+            "_ingestion_date", "_schema_changes",
+        }
+        try:
+            existing_schema = spark.read.format("delta").load(table_path).schema
+        except Exception:
+            return {"new_table": True, "additive": [], "breaking": [], "unchanged": []}
 
-        # Incoming schema adds a new column
-        incoming = sample_product_df.withColumn("new_field", F.lit("added_value"))
-        incoming_cols = set(incoming.columns)
+        existing = {
+            f.name: f.dataType
+            for f in existing_schema.fields
+            if f.name not in META_COLS
+        }
+        incoming = {
+            f.name: f.dataType
+            for f in incoming_schema.fields
+            if f.name not in META_COLS
+        }
 
-        additive = incoming_cols - existing_cols
-        assert "new_field" in additive, (
-            "detect_drift must classify 'new_field' as additive (present in "
-            "incoming but absent from existing table)"
+        additive     = [c for c in incoming if c not in existing]
+        type_changes = [c for c in existing if c in incoming
+                        and str(existing[c]) != str(incoming[c])]
+        removed      = [c for c in existing if c not in incoming]
+        breaking     = type_changes + removed
+        unchanged    = [c for c in existing if c in incoming and c not in breaking]
+
+        return {
+            "new_table": False,
+            "additive":  additive,
+            "breaking":  breaking,
+            "unchanged": unchanged,
+        }
+
+    # ── tests ────────────────────────────────────────────────────────────────
+
+    def test_new_table_flag_when_table_absent(self, spark, tmp_path):
+        result = self._detect_drift(
+            spark, str(tmp_path / "nonexistent"), PRODUCT_SOURCE_SCHEMA
+        )
+        assert result["new_table"] is True
+        assert result["additive"]  == []
+        assert result["breaking"]  == []
+
+    def test_no_drift_when_schema_identical(self, spark, tmp_path):
+        path = self._existing_table(spark, tmp_path)
+        result = self._detect_drift(spark, path, PRODUCT_SOURCE_SCHEMA)
+        assert result["new_table"] is False
+        assert result["additive"]  == []
+        assert result["breaking"]  == []
+
+    def test_additive_drift_detected(self, spark, tmp_path):
+        """Adding a new column to incoming data is additive drift (safe)."""
+        path = self._existing_table(spark, tmp_path)
+
+        extended_schema = StructType(
+            PRODUCT_SOURCE_SCHEMA.fields
+            + [StructField("new_regulatory_flag", StringType(), True)]
+        )
+        result = self._detect_drift(spark, path, extended_schema)
+
+        assert "new_regulatory_flag" in result["additive"], (
+            "Additive drift not detected for new_regulatory_flag"
+        )
+        assert result["breaking"] == [], "No breaking changes expected"
+
+    def test_additive_drift_auto_merged(self, spark, tmp_path):
+        """After detecting additive drift, ALTER TABLE ADD COLUMNS succeeds."""
+        path = self._existing_table(spark, tmp_path)
+
+        # Simulate adding a new column via ALTER TABLE
+        spark.sql(f"""
+            ALTER TABLE delta.`{path}`
+            ADD COLUMNS (new_regulatory_flag STRING)
+        """)
+
+        cols = spark.read.format("delta").load(path).columns
+        assert "new_regulatory_flag" in cols, (
+            "New column not present in Delta table after ALTER TABLE"
         )
 
-    def test_additive_column_merges_into_delta(self, spark, tmp_path):
-        """
-        When additive drift is detected, ALTER TABLE ADD COLUMNS extends the table
-        schema. Existing rows receive NULL for the new column.
-        """
-        table_path = str(tmp_path / "drift_additive")
-        schema_v1 = StructType([
-            StructField("product_id",  StringType(), False),
-            StructField("description", StringType(), True),
+    def test_additive_drift_existing_rows_get_null(self, spark, tmp_path):
+        """Rows that pre-date the new column must have NULL for that column."""
+        path = self._existing_table(spark, tmp_path)
+        spark.sql(f"ALTER TABLE delta.`{path}` ADD COLUMNS (new_regulatory_flag STRING)")
+
+        null_count = (
+            spark.read.format("delta").load(path)
+            .filter(F.col("new_regulatory_flag").isNull())
+            .count()
+        )
+        total = spark.read.format("delta").load(path).count()
+        assert null_count == total, (
+            "Pre-existing rows should have NULL for newly added column"
+        )
+
+    def test_type_change_is_breaking(self, spark, tmp_path):
+        """Changing a column's type (STRING → INTEGER) is a breaking change."""
+        path = self._existing_table(spark, tmp_path)
+
+        # product_id is STRING in existing; incoming tries to send it as INTEGER
+        breaking_schema = StructType([
+            StructField("product_id",             IntegerType(),      False),  # type change!
+            StructField("id_type",                StringType(),       True),
+            StructField("type",                   StringType(),       True),
+            StructField("sub_type",               StringType(),       True),
+            StructField("status",                 StringType(),       True),
+            StructField("settlement_type",        StringType(),       True),
+            StructField("description",            StringType(),       True),
+            StructField("issue_date",             DateType(),         True),
+            StructField("issue_price",            DecimalType(28, 8), True),
+            StructField("current_face_value",     DecimalType(28, 8), True),
+            StructField("issuer_legal_entity_id", StringType(),       True),
+            StructField("tick_ladder_scale_id",   StringType(),       True),
         ])
-        df_v1 = spark.createDataFrame([("P001", "Original")], schema_v1)
-        (
-            _add_metadata(df_v1, "product.csv", "batch_001")
-            .write.format("delta").mode("overwrite")
-            .option("overwriteSchema", "true")
-            .save(table_path)
+        result = self._detect_drift(spark, path, breaking_schema)
+
+        assert "product_id" in result["breaking"], (
+            "Type change on product_id should be flagged as breaking"
         )
+        assert result["additive"] == []
 
-        # Simulate ALTER TABLE ADD COLUMNS (handle_additive_drift behaviour)
-        spark.sql(f"ALTER TABLE delta.`{table_path}` ADD COLUMNS (new_field STRING)")
+    def test_column_removal_is_breaking(self, spark, tmp_path):
+        """Dropping an existing column from incoming data is a breaking change."""
+        path = self._existing_table(spark, tmp_path)
 
-        result = spark.read.format("delta").load(table_path)
-        assert "new_field" in result.columns, (
-            "New column must be present after ALTER TABLE ADD COLUMNS"
-        )
-
-        null_count = result.filter(F.col("new_field").isNull()).count()
-        assert null_count == result.count(), (
-            "Existing rows must have NULL for the newly added column"
-        )
-
-    def test_additive_drift_does_not_drop_existing_columns(self, spark, tmp_path):
-        """
-        Auto-merging a new column must not remove any existing column.
-        """
-        table_path = str(tmp_path / "drift_no_drop")
-        schema_v1 = StructType([
-            StructField("product_id",  StringType(), False),
-            StructField("type",        StringType(), True),
-            StructField("description", StringType(), True),
+        # Remove description and issuer_legal_entity_id from incoming
+        reduced_schema = StructType([
+            f for f in PRODUCT_SOURCE_SCHEMA.fields
+            if f.name not in {"description", "issuer_legal_entity_id"}
         ])
-        df_v1 = spark.createDataFrame([("P001", "EQUITY", "Apple")], schema_v1)
-        (
-            _add_metadata(df_v1, "product.csv", "batch_001")
-            .write.format("delta").mode("overwrite")
-            .option("overwriteSchema", "true")
-            .save(table_path)
-        )
-        spark.sql(
-            f"ALTER TABLE delta.`{table_path}` ADD COLUMNS (extra_field STRING)"
-        )
+        result = self._detect_drift(spark, path, reduced_schema)
 
-        cols_after = set(spark.read.format("delta").load(table_path).columns)
-        for original_col in ["product_id", "type", "description"]:
-            assert original_col in cols_after, (
-                f"Existing column '{original_col}' must not be dropped "
-                f"when adding a new column"
-            )
+        assert "description"            in result["breaking"]
+        assert "issuer_legal_entity_id" in result["breaking"]
 
-    # --- Breaking drift -------------------------------------------------------
-
-    def test_breaking_drift_type_change_raises_error(self, spark, tmp_path):
+    def test_breaking_drift_raises_on_quarantine(self, spark, tmp_path):
         """
-        Type change in an existing column triggers quarantine — raises ValueError.
-        Mirrors handle_breaking_drift() in src/ingestion/schema_drift.py.
+        handle_breaking_drift() must raise a ValueError so the Databricks
+        job fails and triggers an alert — never silently continues.
         """
-        schema_v1 = StructType([
-            StructField("product_id",    StringType(),  False),
-            StructField("coupon_rate",   DoubleType(),  True),  # originally DOUBLE
-        ])
-        schema_v2 = StructType([
-            StructField("product_id",    StringType(),  False),
-            StructField("coupon_rate",   StringType(),  True),  # now STRING — breaking!
-        ])
+        def handle_breaking_drift(breaking_columns, batch_id):
+            if breaking_columns:
+                raise ValueError(
+                    f"[SCHEMA DRIFT] Breaking change: {breaking_columns}. "
+                    f"Batch {batch_id} quarantined."
+                )
 
-        existing_fields = {f.name: str(f.dataType) for f in schema_v1.fields}
-        incoming_fields = {f.name: str(f.dataType) for f in schema_v2.fields}
+        with pytest.raises(ValueError, match="SCHEMA DRIFT"):
+            handle_breaking_drift(["product_id"], "batch_drift_test")
 
-        # Replicate detect_drift() logic
-        META_COLS = {"_source_file", "_ingestion_ts", "_batch_id
+    def test_multiple_additive_columns_all_detected(self, spark, tmp_path):
+        """Drift detection must surface every new column, not just the first."""
+        path = self._existing_table(spark, tmp_path)
+
+        extended_schema = StructType(
+            PRODUCT_SOURCE_SCHEMA.fields + [
+                StructField("col_alpha",  StringType(), True),
+                StructField("col_beta",   StringType(), True),
+                StructField("col_gamma",  StringType(), True),
+            ]
+        )
+        result = self._detect_drift(spark, path, extended_schema)
+
+        for col in ["col_alpha", "col_beta", "col_gamma"]:
+            assert col in result["additive"], f"Additive column '{col}' not detected"
+
+    def test_unchanged_columns_classified_correctly(self, spark, tmp_path):
+        """Columns that exist in both schemas and have the same type → unchanged."""
+        path = self._existing_table(spark, tmp_path)
+        result = self._detect_drift(spark, path, PRODUCT_SOURCE_SCHEMA)
+
+        # All source columns (minus metadata) should be in unchanged

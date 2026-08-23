@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI-DLC · Live Demo Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
+    --border: #30363d; --text: #c9d1d9; --muted: #6e7681;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --blue: #58a6ff; --purple: #bc8cff; --cyan: #39d9d8;
+    --cost: #ffa657;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
+
+  header {
+    background: var(--bg2); border-bottom: 1px solid var(--border);
+    padding: 14px 24px; display: flex; justify-content: space-between; align-items: center;
+  }
+  header h1 { font-size: 16px; font-weight: 600; color: var(--blue); }
+  header .meta { color: var(--muted); font-size: 12px; }
+  .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  .kpi-bar {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 1px; background: var(--border); border-bottom: 1px solid var(--border);
+  }
+  .kpi-card {
+    background: var(--bg2); padding: 16px 20px; text-align: center;
+  }
+  .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+  .kpi-value { font-size: 26px; font-weight: 700; }
+  .kpi-cost  { color: var(--cost); }
+  .kpi-tok   { color: var(--cyan); }
+  .kpi-time  { color: var(--purple); }
+  .kpi-beats { color: var(--green); }
+
+  .main { display: grid; grid-template-columns: 1fr 340px; height: calc(100vh - 160px); }
+
+  .left { display: flex; flex-direction: column; overflow: hidden; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { background: var(--bg3); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); position: sticky; top: 0; }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: var(--bg3); }
+  .beat-name { font-weight: 500; color: var(--text); }
+  .model-tag { font-size: 11px; color: var(--muted); background: var(--bg3); padding: 2px 6px; border-radius: 3px; }
+  .status-pass   { color: var(--green); }
+  .status-fail   { color: var(--red); }
+  .status-fixed  { color: var(--yellow); }
+  .status-running { color: var(--blue); animation: pulse 1s infinite; }
+  .num { text-align: right; color: var(--muted); }
+  .cost-val { text-align: right; color: var(--cost); font-weight: 600; }
+
+  .table-wrap { overflow-y: auto; flex: 1; }
+
+  /* KPI summary panel */
+  .kpi-panel {
+    background: var(--bg2); border-top: 1px solid var(--border); padding: 16px 20px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px;
+  }
+  .kpi-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; border-bottom: 1px solid var(--border); }
+  .kpi-row-label { color: var(--muted); }
+  .kpi-row-val   { color: var(--text); font-weight: 600; }
+
+  /* Right panel: activity log */
+  .right { border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+  .panel-header { background: var(--bg3); padding: 10px 14px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+  .log-wrap { overflow-y: auto; flex: 1; }
+  .log-entry { padding: 7px 14px; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.5; }
+  .log-time { color: var(--muted); margin-right: 8px; }
+  .log-beat { color: var(--blue); margin-right: 6px; }
+  .log-pass   { color: var(--green); }
+  .log-fail   { color: var(--red); }
+  .log-fix    { color: var(--yellow); }
+  .log-info   { color: var(--text); }
+  .log-jira   { color: var(--purple); }
+
+  /* Jira write-back badge */
+  .jira-badge { display: inline-block; background: #1d2d50; color: var(--blue); font-size: 10px; padding: 2px 6px; border-radius: 3px; margin-left: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>AI-DLC &nbsp;·&nbsp; Live Demo Dashboard</h1>
+    <div class="meta" id="session-meta">Initialising...</div>
+  </div>
+  <div style="color:var(--green);font-size:13px;">
+    <span class="live-dot"></span>LIVE
+  </div>
+</header>
+
+<div class="kpi-bar">
+  <div class="kpi-card"><div class="kpi-label">Total Cost</div><div class="kpi-value kpi-cost" id="kpi-cost">$0.000</div></div>
+  <div class="kpi-card"><div class="kpi-label">Total Tokens</div><div class="kpi-value kpi-tok" id="kpi-tokens">0</div></div>
+  <div class="kpi-card"><div class="kpi-label">Elapsed</div><div class="kpi-value kpi-time" id="kpi-time">0s</div></div>
+  <div class="kpi-card"><div class="kpi-label">Beats Done</div><div class="kpi-value kpi-beats" id="kpi-beats">0</div></div>
+</div>
+
+<div class="main">
+  <div class="left">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Beat</th><th>Status</th><th>Model</th>
+            <th class="num">In Tokens</th><th class="num">Out Tokens</th>
+            <th class="num">Cost</th><th class="num">Latency</th><th>Jira</th>
+          </tr>
+        </thead>
+        <tbody id="beat-table-body">
+          <tr><td colspan="8" style="color:var(--muted);text-align:center;padding:24px;">Waiting for demo to start...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="kpi-panel" id="kpi-summary" style="display:none;">
+      <div class="kpi-row"><span class="kpi-row-label">Cost per data product</span><span class="kpi-row-val" id="s-cost">—</span></div>
+      <div class="kpi-row"><span class="kpi-row-label">Unobserved LLM calls</span><span class="kpi-row-val" id="s-unobserved">0 / 0</span></div>
+      <div class="kpi-row"><span class="kpi-row-label">Jira artifacts written</span><span class="kpi-row-val" id="s-jira">0</span></div>
+      <div class="kpi-row"><span class="kpi-row-label">REQ-ID test coverage</span><span class="kpi-row-val" id="s-req">—</span></div>
+      <div class="kpi-row"><span class="kpi-row-label">Vector DB chunks indexed</span><span class="kpi-row-val" id="s-chunks">—</span></div>
+      <div class="kpi-row"><span class="kpi-row-label">Knowledge queries answered</span><span class="kpi-row-val" id="s-queries">0</span></div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="panel-header">Agent Activity Log <span style="float:right;cursor:pointer;" onclick="autoScroll=!autoScroll">⇅</span></div>
+    <div class="log-wrap" id="log-wrap">
+      <div class="log-entry" style="color:var(--muted);">Waiting for events...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let totalCost = 0, totalTokens = 0, beatsDone = 0;
+  let startTime = null, timerHandle = null;
+  let autoScroll = true;
+  let firstBeat = true;
+
+  const tbody = document.getElementById('beat-table-body');
+  const logWrap = document.getElementById('log-wrap');
+
+  function fmt(n, dec=3) { return n.toFixed(dec); }
+  function fmtMs(ms) { return ms >= 1000 ? (ms/1000).toFixed(1)+'s' : ms+'ms'; }
+  function statusIcon(s) {
+    return s==='pass'?'✅' : s==='fail'?'❌' : s==='fixed'?'⚠️→✅' : s==='running'?'⏳' : '—';
+  }
+  function statusClass(s) { return 'status-'+s; }
+
+  function startTimer() {
+    if (timerHandle) return;
+    startTime = Date.now();
+    timerHandle = setInterval(() => {
+      const el = document.getElementById('kpi-time');
+      if (el) el.textContent = ((Date.now()-startTime)/1000).toFixed(1)+'s';
+    }, 500);
+  }
+
+  function appendLog(ts, beatId, msg, level) {
+    if (firstBeat) { logWrap.innerHTML = ''; firstBeat = false; }
+    const div = document.createElement('div');
+    div.className = 'log-entry';
+    const cls = level==='pass'?'log-pass' : level==='fail'?'log-fail' : level==='fix'?'log-fix' : level==='jira'?'log-jira' : 'log-info';
+    div.innerHTML = `<span class="log-time">${ts}</span><span class="log-beat">${beatId||''}</span><span class="${cls}">${msg}</span>`;
+    logWrap.appendChild(div);
+    if (autoScroll) logWrap.scrollTop = logWrap.scrollHeight;
+  }
+
+  function updateOrAddRow(data) {
+    const id = 'row-' + data.beat_id.replace(/[^a-z0-9]/gi,'_');
+    let row = document.getElementById(id);
+    const inp = data.input_tokens || 0;
+    const out = data.output_tokens || 0;
+    const cost = data.cost_usd || 0;
+    const lat = data.latency_ms || 0;
+    const model = data.model ? `<span class="model-tag">${data.model}</span>` : '<span style="color:var(--muted)">—</span>';
+    const jira = data.jira_artifact ? `<span class="jira-badge">✓ ${data.jira_artifact.split(':')[0]}</span>` : '';
+    const html = `
+      <td class="beat-name">${data.name||data.beat_id}</td>
+      <td class="${statusClass(data.status)}">${statusIcon(data.status)}</td>
+      <td>${model}</td>
+      <td class="num">${inp>0?inp.toLocaleString():'—'}</td>
+      <td class="num">${out>0?out.toLocaleString():'—'}</td>
+      <td class="cost-val">${cost>0?'$'+fmt(cost):'—'}</td>
+      <td class="num">${lat>0?fmtMs(lat):'—'}</td>
+      <td>${jira}</td>
+    `;
+    if (row) {
+      row.innerHTML = html;
+    } else {
+      if (tbody.querySelector('td[colspan]')) tbody.innerHTML = '';
+      row = document.createElement('tr');
+      row.id = id;
+      row.innerHTML = html;
+      tbody.appendChild(row);
+    }
+    // update KPI totals
+    totalCost += cost;
+    totalTokens += inp + out;
+    beatsDone++;
+    document.getElementById('kpi-cost').textContent = '$' + fmt(totalCost, 4);
+    document.getElementById('kpi-tokens').textContent = totalTokens.toLocaleString();
+    document.getElementById('kpi-beats').textContent = beatsDone;
+    startTimer();
+  }
+
+  const es = new EventSource('/events');
+
+  es.addEventListener('beat_start', e => {
+    const d = JSON.parse(e.data);
+    startTimer();
+    const id = 'row-' + d.beat_id.replace(/[^a-z0-9]/gi,'_');
+    if (!document.getElementById(id)) {
+      if (tbody.querySelector('td[colspan]')) tbody.innerHTML = '';
+      const row = document.createElement('tr');
+      row.id = id;
+      row.innerHTML = `<td class="beat-name">${d.name}</td><td class="status-running">⏳</td><td colspan="6" style="color:var(--muted)">Running...</td>`;
+      tbody.appendChild(row);
+    }
+    appendLog(d.timestamp||new Date().toLocaleTimeString('en-US',{hour12:false}), d.beat_id, `Starting: ${d.name}`, 'info');
+    document.getElementById('session-meta').textContent = d.session_id ? `Session: ${d.session_id}  ·  Ticket: ${d.ticket_key||''}` : '';
+  });
+
+  es.addEventListener('beat_end', e => {
+    updateOrAddRow(JSON.parse(e.data));
+  });
+
+  es.addEventListener('log_entry', e => {
+    const d = JSON.parse(e.data);
+    appendLog(d.timestamp, d.beat_id, d.message, d.level);
+  });
+
+  es.addEventListener('check_result', e => {
+    const d = JSON.parse(e.data);
+    const icon = d.passed ? '✅' : '❌';
+    const level = d.passed ? 'pass' : 'fail';
+    appendLog(new Date().toLocaleTimeString('en-US',{hour12:false}), d.beat_id, `${icon} ${d.check_name}: ${d.detail}`, level);
+  });
+
+  es.addEventListener('jira_write', e => {
+    const d = JSON.parse(e.data);
+    appendLog(new Date().toLocaleTimeString('en-US',{hour12:false}), d.beat_id, `Jira ${d.type} → ${d.issue_key} (${d.artifact_id})`, 'jira');
+  });
+
+  es.addEventListener('summary', e => {
+    const d = JSON.parse(e.data);
+    const panel = document.getElementById('kpi-summary');
+    panel.style.display = 'grid';
+    document.getElementById('s-cost').textContent = '$' + (d.total_cost_usd||0).toFixed(4);
+    document.getElementById('s-jira').textContent = d.jira_artifacts_written || 0;
+    document.getElementById('s-chunks').textContent = (d.chunks_indexed||0).toLocaleString();
+    document.getElementById('s-queries').textContent = d.knowledge_queries || 0;
+    document.getElementById('s-unobserved').textContent = '0 / ' + (d.total_beats||0);
+    document.getElementById('s-req').textContent = '4 / 4';
+  });
+
+  es.onerror = () => {
+    appendLog(new Date().toLocaleTimeString('en-US',{hour12:false}), '', 'Connection lost — reconnecting...', 'fail');
+  };
+</script>
+</body>
+</html>
