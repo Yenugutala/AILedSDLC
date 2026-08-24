@@ -4,7 +4,8 @@
   "completed_beats": [
     "beat2",
     "beat3",
-    "beat4"
+    "beat4",
+    "beat4b"
   ],
   "artifacts": {
     "beat2": {
@@ -19,7 +20,12 @@
       "notebook_path": "project/notebooks/05_gold_build.sql",
       "test_path": "project/tests/test_gold.py",
       "sign_off_comment_id": "10013"
+    },
+    "beat4b": {
+      "pr_url": "",
+      "deployed": false,
+      "job_ran": false
     }
   },
-  "updated_at": "2026-08-24T00:42:06"
+  "updated_at": "2026-08-24T00:42:56"
 }

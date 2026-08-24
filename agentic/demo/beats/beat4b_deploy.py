@@ -100,7 +100,7 @@ def run(
         metrics.emit_log("beat4b", f"Deploy skipped: {e}", "warn")
 
     # ── Sub-step C: Trigger gold_mart_job ──────────────────────────────
-    console.print("[bold]Step C:[/] Triggering gold_mart_job — streaming live output...")
+    console.print("[bold]Step C:[/] Running gold_mart_job — streaming live output (waiting for completion)...")
     metrics.emit_log("beat4b", "Deploy Agent: triggering gold_mart_job...")
     try:
         deploy_agent.trigger_job("gold_mart_job")
