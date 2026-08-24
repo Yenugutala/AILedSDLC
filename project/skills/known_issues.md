@@ -359,6 +359,33 @@ pip install -e agentic/
 
 ---
 
+## ISSUE-025: `databricks bundle run <job>` fails if ANY notebook in databricks.yml is missing
+
+**Symptom**: Running `databricks bundle run gold_mart_job` fails with:
+```
+Error: notebook notebooks/03_bronze_ingest.py not found
+```
+or
+```
+Error: notebook notebooks/04_silver_conform.sql not found
+```
+even when `gold_mart_job` only needs `notebooks/05_gold_build.sql`.
+
+**Cause**: `databricks bundle run` validates the **entire** bundle before executing any single
+job. Every notebook path declared across all jobs in `databricks.yml` must exist on disk.
+
+**When it occurs**: Developer Agent generates only one layer (e.g. `layer_only="gold"`)
+without checking whether the other notebooks exist; or notebooks are deleted between runs.
+
+**Prevention (Developer Agent rule)**:
+- Before generating any notebook, check that `project/notebooks/03_bronze_ingest.py`,
+  `project/notebooks/04_silver_conform.sql`, and `project/notebooks/05_gold_build.sql` all exist.
+- If any are missing, generate ALL three — never generate a subset.
+
+**Fix**: Run Beat 4 (Developer Agent) to regenerate all three notebooks, then Beat 4b (Deploy Agent).
+
+---
+
 ## ISSUE-020: databricks.yml — hardcoded `job_clusters` blocks caused serverless conflicts
 
 **Symptom**: Jobs failed to start, or Databricks showed cluster provisioning errors when

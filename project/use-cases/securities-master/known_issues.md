@@ -403,6 +403,32 @@ for f in project/notebooks/03_bronze_ingest.py project/notebooks/04_silver_confo
 
 ---
 
+## SETUP-017: `databricks bundle run <job>` fails when ANY notebook in databricks.yml is missing
+
+**Symptom**: Running `databricks bundle run gold_mart_job` (or any single job) fails with:
+```
+Error: notebook notebooks/03_bronze_ingest.py not found
+Error: notebook notebooks/04_silver_conform.sql not found
+```
+even though `gold_mart_job` only needs `notebooks/05_gold_build.sql`.
+
+**Cause**: `databricks bundle run` validates the **entire** bundle before running any single job.
+All notebook paths declared in `databricks.yml` must exist on disk — not just the notebooks
+needed by the specific job being run.
+
+**Trigger**: This happens when the Developer Agent generates only the gold notebook
+(e.g. `layer_only="gold"`) without also generating bronze and silver notebooks,
+or when notebooks are deleted (e.g. `git clean`) between runs.
+
+**Fix for Developer Agent**:
+- Always generate ALL three notebooks together: `03_bronze_ingest.py`, `04_silver_conform.sql`, `05_gold_build.sql`
+- Never generate only a single layer if the other notebooks do not already exist on disk
+- Check `project/notebooks/` before starting: if any of the three are missing, generate all three
+
+**Manual fix**: Run Beat 4 (Developer Agent) to regenerate all notebooks, then re-run Beat 4b (Deploy Agent).
+
+---
+
 ## SETUP-014: Gold — `COMMENT ON COLUMN rating_value` truncated — unclosed SQL string literal
 
 **File**: `05_gold_build.sql`

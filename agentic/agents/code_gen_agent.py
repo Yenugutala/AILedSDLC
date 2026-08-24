@@ -38,6 +38,20 @@ def run(ctx: AgentContext, layer_only: str | None = None, feedback: str | None =
     system_prompt = context_loader.build_system_prompt(ctx, "code_gen_agent")
     system_prompt += f"\n\n{PROMPT_FILE.read_text()}"
 
+    # ISSUE-025 guard: if any notebook is missing, generate all three.
+    # databricks bundle run validates the entire bundle, so all notebooks must exist on disk.
+    all_notebooks = [
+        GENERATED_DIR / "03_bronze_ingest.py",
+        GENERATED_DIR / "04_silver_conform.sql",
+        GENERATED_DIR / "05_gold_build.sql",
+    ]
+    if layer_only and not all(p.exists() for p in all_notebooks):
+        console.print(
+            f"[yellow]  ⚠ layer_only={layer_only!r} requested but some notebooks are missing. "
+            "Generating all three to satisfy bundle validation.[/]"
+        )
+        layer_only = None
+
     layers = [layer_only] if layer_only else ["bronze", "silver", "gold"]
     outputs = []
 
