@@ -193,10 +193,11 @@ class DemoHarness:
         self.langfuse.start_trace(self.session_id, ctx.ticket.key)
 
         # Beat 1 HITL — also handles jump commands
-        beat1_jump = _human_approval(
+        beat1_action, beat1_payload = _human_approval(
             console, "Beat 1 · BA Agent (Pull Ticket)", "Beat 2 · BA Agent: Clarification"
         )
-        jump_target: str | None = beat1_jump if beat1_jump else None
+        # Only set jump_target if the user explicitly requested a jump; approve = run all beats
+        jump_target: str | None = beat1_payload if beat1_action == "jump" else None
 
         # ── Check for existing demo state (resume after crash) ─────────
         demo_state = DemoState.load(self.config.chroma_path, ctx.ticket.key)

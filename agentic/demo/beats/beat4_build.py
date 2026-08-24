@@ -82,7 +82,7 @@ def run(
     console.print(f"\n[dim cyan]┌─ QA Agent · test_gen_agent ─────────────────────────────[/]")
     metrics.emit_log("beat4", "QA Agent: generating test suite with REQ-ID tracing...")
     with Timer() as t:
-        test_gen_agent.run(ctx_ag)   # streams live, writes test_bronze/silver/gold.py
+        test_gen_agent.run(ctx_ag, layer_only="gold")   # streams live, writes test_gold.py only
     console.print(f"[dim cyan]└─ QA Agent complete ({t.elapsed_ms}ms) ──────────────────────[/]\n")
     test_path = "project/tests/test_gold.py"
     metrics.record(

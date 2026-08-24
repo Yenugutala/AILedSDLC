@@ -23,14 +23,31 @@ console = Console()
 PROMPT_FILE = Path(__file__).parent / "prompts" / "qa_agent.md"
 
 
-def run(ctx: AgentContext) -> str:
+def run(ctx: AgentContext, layer_only: str | None = None) -> str:
     client = anthropic.Anthropic()
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
     system_prompt = context_loader.build_system_prompt(ctx, "qa_agent")
     system_prompt += f"\n\n{PROMPT_FILE.read_text()}"
 
-    user_prompt = context_loader.build_user_prompt(ctx, "qa_agent", extra="""
+    if layer_only == "gold":
+        task = """
+## Your Task
+Generate ONLY the Gold layer test file. The change is a single new column in the Gold mart.
+
+### test_gold.py (ONLY this file — max 2 test cases)
+Write exactly 2 pytest test functions that validate the new Gold column added by this ticket:
+1. Column exists in the gold table schema
+2. Column produces non-null values for the applicable security types
+
+Requirements:
+- Python pytest, use `pyspark.sql.SparkSession` with `databricks.connect` fallback
+- Gold table: `statestreet.g_statestreet.securities_master`
+- Keep tests focused, concise, and runnable against live Databricks
+- Label the file exactly: ### TEST FILE: tests/test_gold.py
+"""
+    else:
+        task = """
 ## Your Task
 Generate pytest files for all three layers. All files must be Python (.py) using pytest.
 
@@ -51,7 +68,9 @@ Generate pytest files for all three layers. All files must be Python (.py) using
    - No NULL product_id in any Gold table
 
 Label each file exactly: ### TEST FILE: tests/test_bronze.py  (etc.)
-""")
+"""
+
+    user_prompt = context_loader.build_user_prompt(ctx, "qa_agent", extra=task)
 
     console.print("[dim]  Calling Claude API (QA Agent)...[/]")
     console.print("[dim]  Generating pytest files for Bronze, Silver, Gold layers...[/]")

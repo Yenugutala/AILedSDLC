@@ -1,3 +1,4 @@
+```sql
 -- Databricks notebook source
 -- MAGIC %md
 -- MAGIC # Gold Layer — Securities Master Analytics Mart
@@ -188,6 +189,18 @@ SELECT
   lr.effective_from_date                             AS latest_rating_date,
   lr.rating_agency                                   AS latest_rating_agency,
   lr.product_rating_type_id                          AS latest_rating_type_id,
+
+  -- ── Net settlement amount (REQ-03) — BOND and MUNI only ──────────────────
+  -- Proxy: current_face_value × (1 + coupon_rate); NULL for all other types.
+  -- current_face_value sourced from product; coupon_rate from latest coupon CTE.
+  CASE
+    WHEN p.type = 'DEBT'
+     AND p.sub_type IN ('BOND', 'MUNI')
+     AND p.current_face_value IS NOT NULL
+     AND lc.coupon_rate       IS NOT NULL
+    THEN CAST(p.current_face_value * (1.0 + lc.coupon_rate) AS DECIMAL(18,6))
+    ELSE NULL
+  END                                                AS net_settlement_amount,
 
   -- ── Pipeline provenance ───────────────────────────────────────────────────
   p._dq_rule_version,
@@ -517,6 +530,13 @@ COMMENT ON COLUMN statestreet.g_statestreet.securities_master.latest_rating_type
 
 -- COMMAND ----------
 
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.net_settlement_amount IS
+  'Net cash settlement amount for BOND and MUNI security types. '
+  'Formula: current_face_value × (1 + coupon_rate). '
+  'NULL for all other product types and for bonds with no coupon record. '
+  'Precision: DECIMAL(18,6). Currency follows bond_face_currency_code.';
+
+-- COMMAND ----------
 
 COMMENT ON COLUMN statestreet.g_statestreet.securities_master._dq_rule_version IS
   'SHA256 version hash of the Silver DQ rules.yaml file that was applied '
