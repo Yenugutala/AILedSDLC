@@ -57,6 +57,17 @@ def run(ctx: AgentContext, layer_only: str | None = None, feedback: str | None =
 
     for layer in layers:
         console.print(f"[dim]  Generating {layer} notebook...[/]")
+
+        # Gold layer with an existing notebook: patch only new columns — do NOT regenerate
+        if layer == "gold":
+            existing_path = GENERATED_DIR / "05_gold_build.sql"
+            if existing_path.exists():
+                patched = _patch_gold_new_columns(client, ctx, system_prompt, existing_path)
+                if patched:
+                    output = f"[patched {existing_path.name} with new columns from gold/tables.yaml]"
+                    outputs.append(output)
+                    continue
+
         output = _generate_layer(client, ctx, system_prompt, layer, feedback=feedback)
         outputs.append(output)
         _write_notebook(layer, output)
@@ -146,6 +157,17 @@ def _write_notebook(layer: str, output: str):
     if not content:
         # Fallback: strip any wrapping code fence from the raw output
         content = _strip_code_fence(output)
+
+    # Final guard: if the first line is still a code fence, strip it.
+    # This happens when the LLM emits ```sql\n-- Databricks notebook source\n...
+    # which confuses Databricks bundle validate ("not a notebook").
+    lines = content.split("\n")
+    if lines and lines[0].strip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    content = "\n".join(lines).strip()
+
     dest.write_text(content + "\n", encoding="utf-8")
     console.print(f"  [green]✓[/] Written: {dest.relative_to(PROJECT_ROOT)}")
 
@@ -158,6 +180,116 @@ def _strip_code_fence(text: str) -> str:
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
     return "\n".join(lines).strip()
+
+
+def _patch_gold_new_columns(client, ctx, system_prompt: str, notebook_path) -> bool:
+    """
+    Patch an existing Gold notebook with only the new columns from gold/tables.yaml.
+    Returns True if any columns were added, False if nothing to patch.
+
+    Instead of regenerating the full notebook, this:
+    1. Detects which columns in gold/tables.yaml are missing from the notebook
+    2. Asks the LLM to generate ONLY the SQL expression for each new column (~5 lines)
+    3. Splices the expression into the existing notebook at the right place
+    """
+    import yaml
+
+    specs_dir = REPO_ROOT / "use-cases" / ctx.use_case_name / "specs" / "gold"
+    tables_yaml_path = specs_dir / "tables.yaml"
+    if not tables_yaml_path.exists():
+        return False
+
+    spec = yaml.safe_load(tables_yaml_path.read_text()) or {}
+    tables = spec.get("tables", [])
+    if not tables:
+        return False
+
+    new_cols = [c for t in tables for c in t.get("columns", [])]
+    if not new_cols:
+        return False
+
+    notebook = notebook_path.read_text(encoding="utf-8")
+
+    # Filter to only columns not already in the notebook
+    missing = [c for c in new_cols if c["name"] not in notebook]
+    if not missing:
+        console.print("[dim]  All gold columns already in notebook — nothing to patch.[/]")
+        return True
+
+    for col in missing:
+        console.print(f"[dim]  Patching gold notebook with new column: {col['name']}...[/]")
+
+        prompt = f"""You are patching a Databricks SQL Gold notebook.
+Add ONLY the SELECT expression for the new column below.
+Output exactly two SQL blocks:
+
+1. The SELECT column expression (a few lines of SQL, ending with a comma):
+### SELECT_EXPR
+<sql here>
+
+2. The COMMENT ON COLUMN statement (one SQL statement):
+### COMMENT_EXPR
+<sql here>
+
+New column spec:
+  name: {col['name']}
+  type: {col.get('type', 'STRING')}
+  description: {col.get('description', '')}
+
+Known issues context (use this to write the correct formula):
+{ctx.use_case_known_issues}
+
+Gold table: statestreet.g_statestreet.securities_master
+Available CTEs in this notebook: current_product (p), latest_coupon_dedup (lc), primary_identifier_dedup (pid)
+
+Rules:
+- Do NOT output the full notebook
+- Do NOT wrap in code fences
+- Output ONLY the two blocks above
+"""
+        chunks = []
+        with client.messages.stream(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+            system=system_prompt,
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                chunks.append(text)
+        print()
+        raw = "".join(chunks)
+
+        # Extract the two blocks
+        select_expr = _extract_code_block(raw, "### SELECT_EXPR").strip()
+        comment_expr = _extract_code_block(raw, "### COMMENT_EXPR").strip()
+
+        if not select_expr:
+            console.print(f"[yellow]  ⚠ Could not extract SELECT expression for {col['name']} — skipping.[/]")
+            continue
+
+        # Insert SELECT expression before "-- ── Pipeline provenance" line
+        insert_marker = "-- ── Pipeline provenance"
+        if insert_marker not in notebook:
+            console.print(f"[yellow]  ⚠ Cannot find insertion point in notebook — skipping {col['name']}.[/]")
+            continue
+
+        select_block = f"\n  -- ── {col['name']} ────────────────────────────────────────────────────\n  {select_expr}\n\n"
+        notebook = notebook.replace(insert_marker, select_block + "  " + insert_marker)
+
+        # Insert COMMENT ON COLUMN before _dq_rule_version comment
+        if comment_expr:
+            comment_marker = "COMMENT ON COLUMN statestreet.g_statestreet.securities_master._dq_rule_version"
+            if comment_marker in notebook:
+                notebook = notebook.replace(
+                    comment_marker,
+                    f"{comment_expr}\n\n-- COMMAND ----------\n\n{comment_marker}",
+                )
+
+        console.print(f"  [green]✓[/] Patched: {col['name']} added to {notebook_path.name}")
+
+    notebook_path.write_text(notebook, encoding="utf-8")
+    return True
 
 
 def _extract_code_block(text: str, marker: str) -> str:

@@ -1,6 +1,6 @@
 {
   "ticket_key": "SCRUM-7",
-  "session_id": "demo-552e9de4",
+  "session_id": "demo-22f5d15d",
   "completed_beats": [
     "beat2",
     "beat3",
@@ -8,18 +8,18 @@
   ],
   "artifacts": {
     "beat2": {
-      "question": "In `statestreet.s_statestreet.bond`, is `accrued_interest_rate` stored as a decimal fraction (e.g., 0.05 for 5%) or as a percentage (e.g., 5.00), because the formula `principal_amount \u00d7 (1 + accrued_interest_rate)` produces drastically different results \u2014 and potentially nonsensical ones \u2014 if the value is percentage-scaled rather than fractional?",
-      "answer": "decimal fraction (e.g., 0.05 for 5%)",
-      "jira_comment_id": "10014"
+      "question": "In `statestreet.s_statestreet.bond`, is `accrued_interest_rate` already stored as a decimal (e.g., 0.05 for 5%), or as a percentage (e.g., 5.00), because the formula `principal_amount \u00d7 (1 + accrued_interest_rate)` produces wildly different results depending on that convention, and the column's representation isn't documented anywhere in the ticket or the codebase context you've provided?",
+      "answer": "decimal (e.g., 0.05 for 5%)",
+      "jira_comment_id": "10017"
     },
     "beat3": {
-      "build_ready_comment_id": "10015"
+      "build_ready_comment_id": "10018"
     },
     "beat4": {
       "notebook_path": "project/notebooks/05_gold_build.sql",
       "test_path": "project/tests/test_gold.py",
-      "sign_off_comment_id": "10016"
+      "sign_off_comment_id": "10019"
     }
   },
-  "updated_at": "2026-08-24T14:33:19"
+  "updated_at": "2026-08-24T14:46:19"
 }

@@ -418,3 +418,25 @@ in tasks conflicts with serverless routing.
 **Fix (already applied)**: Removed all `job_clusters` blocks from all four jobs
 (`bronze_ingest_job`, `silver_conform_job`, `gold_build_job`, `orchestrate_pipeline_job`).
 Tasks now use the workspace-default compute (serverless or existing shared cluster).
+
+---
+
+## ISSUE-026: Developer Agent wraps notebook output in markdown code fence → bundle deploy fails
+
+**Symptom**: `databricks bundle validate` fails with:
+```
+file at .../05_gold_build.sql is not a notebook
+```
+
+**Cause**: The Developer Agent (LLM) sometimes wraps the notebook output in a markdown
+code fence (` ```sql ` or ` ```python `). The first line of the file becomes ` ```sql `
+instead of `-- Databricks notebook source`, so Databricks CLI does not recognise it as
+a notebook.
+
+**Rule (NON-NEGOTIABLE)**: Never wrap notebook content in code fences.
+The notebook MUST start directly with the Databricks header:
+- SQL: `-- Databricks notebook source`
+- Python: `# Databricks notebook source`
+
+**Already fixed in**: `developer_agent.md` (OUTPUT FORMAT section at top) and
+`code_gen_agent.py` (`_write_notebook` strips any residual leading fence as a safety net).
