@@ -99,28 +99,39 @@ def run(
         ))
         metrics.emit_log("beat4b", f"Deploy skipped: {e}", "warn")
 
-    # ── Sub-step C: Trigger gold_mart_job ──────────────────────────────
-    console.print("[bold]Step C:[/] Running gold_mart_job — streaming live output (waiting for completion)...")
-    metrics.emit_log("beat4b", "Deploy Agent: triggering gold_mart_job...")
-    try:
-        deploy_agent.trigger_job("gold_mart_job")
-        result.job_ran = True
-        metrics.emit_log("beat4b", "gold_mart_job completed — data is live", "deploy")
+    # ── Sub-step C: Trigger gold_mart_job (only if deploy succeeded) ───
+    if not result.deployed:
         console.print(Panel(
-            "[bold green]Data is live![/]\n"
-            "[dim]statestreet.g_statestreet.securities_master[/] is populated and queryable via Genie.",
-            title="[green]✓ gold_mart_job Succeeded[/]",
-            border_style="green",
-        ))
-    except Exception as e:
-        console.print(Panel(
-            "[yellow]Job trigger skipped.[/]\n\n"
-            f"[dim]Reason: {e}[/]\n\n"
-            "[dim]To run manually:[/]  databricks bundle run gold_mart_job",
-            title="[yellow]⚠ Job trigger skipped[/]",
+            "[yellow]Skipping gold_mart_job — bundle was not deployed.[/]\n\n"
+            "[dim]Running the job without deploying would execute the OLD bundle,\n"
+            "which does not include the latest generated notebooks.[/]\n\n"
+            "[dim]To fix: ensure Databricks CLI is configured, then re-run Beat 4b.[/]",
+            title="[yellow]⚠ Step C Skipped — Deploy Required First[/]",
             border_style="yellow",
         ))
-        metrics.emit_log("beat4b", f"Job skipped: {e}", "warn")
+        metrics.emit_log("beat4b", "Step C skipped — deploy failed, refusing to run stale bundle", "warn")
+    else:
+        console.print("[bold]Step C:[/] Running gold_mart_job — streaming live output (waiting for completion)...")
+        metrics.emit_log("beat4b", "Deploy Agent: triggering gold_mart_job...")
+        try:
+            deploy_agent.trigger_job("gold_mart_job")
+            result.job_ran = True
+            metrics.emit_log("beat4b", "gold_mart_job completed — data is live", "deploy")
+            console.print(Panel(
+                "[bold green]Data is live![/]\n"
+                "[dim]statestreet.g_statestreet.securities_master[/] is populated and queryable via Genie.",
+                title="[green]✓ gold_mart_job Succeeded[/]",
+                border_style="green",
+            ))
+        except Exception as e:
+            console.print(Panel(
+                "[yellow]Job trigger skipped.[/]\n\n"
+                f"[dim]Reason: {e}[/]\n\n"
+                "[dim]To run manually:[/]  databricks bundle run gold_mart_job",
+                title="[yellow]⚠ Job trigger skipped[/]",
+                border_style="yellow",
+            ))
+            metrics.emit_log("beat4b", f"Job skipped: {e}", "warn")
 
     # ── Sub-step D: Run generated test suite ───────────────────────────
     if result.job_ran:

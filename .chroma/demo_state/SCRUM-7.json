@@ -1,0 +1,15 @@
+{
+  "ticket_key": "SCRUM-7",
+  "session_id": "demo-83db9d77",
+  "completed_beats": [
+    "beat4b"
+  ],
+  "artifacts": {
+    "beat4b": {
+      "pr_url": "",
+      "deployed": true,
+      "job_ran": true
+    }
+  },
+  "updated_at": "2026-08-24T13:59:21"
+}

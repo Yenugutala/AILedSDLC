@@ -575,29 +575,39 @@ OPTIMIZE statestreet.g_statestreet.securities_master
 
 **File**: `05_gold_build.sql`
 
-**Background**: `net_settlement_amount` requires `bond.principal_amount` and
-`bond.accrued_interest_rate` columns that do NOT exist in the current `bond.csv`.
-Generating it as `CAST(NULL AS DECIMAL(18,6))` adds noise and misleads Genie.
+**Background**: `bond.csv` does NOT have `principal_amount` or `accrued_interest_rate` columns.
+The base Gold notebook must NOT include `net_settlement_amount`.
+Beat 3 (Verify Agent) adds it to `gold/tables.yaml` when a ticket explicitly requires it.
+Beat 4 (Developer Agent) then generates only that column as a minimal change.
 
 **Rule**: The base gold notebook must NOT contain `net_settlement_amount`.
 
-**When to add it**: Only when a Jira ticket explicitly asks for net settlement calculation
-(e.g. "compute net settlement for bonds"). The Developer Agent should then:
-1. Add `principal_amount` and `accrued_interest_rate` to the `bond.csv` source (or a new CSV)
-2. Re-ingest Bronze
-3. Re-run Silver
-4. Add the column to Gold with the formula:
-   ```sql
-   CASE
-     WHEN p.type = 'DEBT' AND p.sub_type IN ('BOND', 'MUNI')
-          AND b.principal_amount IS NOT NULL
-          AND b.accrued_interest_rate IS NOT NULL
-     THEN b.principal_amount * (1 + b.accrued_interest_rate)
-     ELSE NULL
-   END AS net_settlement_amount
-   ```
-5. Add DQ-GOLD-02 and DQ-GOLD-03 checks back
-6. Add the `COMMENT ON COLUMN` for `net_settlement_amount`
+**Proxy formula (working — confirmed with 201 rows)**:
+Use `p.current_face_value` from the product table and `lc.coupon_rate` from the latest
+coupon CTE (already in the gold notebook as `latest_coupon`). Both columns exist in Silver.
+
+```sql
+-- ── Net settlement amount ─────────────────────────────────────────────────
+CASE
+  WHEN p.type = 'DEBT' AND p.sub_type IN ('BOND', 'MUNI')
+       AND p.current_face_value IS NOT NULL
+       AND lc.coupon_rate       IS NOT NULL
+  THEN CAST(p.current_face_value * (1.0 + lc.coupon_rate) AS DECIMAL(18, 6))
+  ELSE NULL
+END AS net_settlement_amount,
+```
+
+And add the COMMENT ON COLUMN:
+```sql
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.net_settlement_amount IS
+  'Net cash settlement amount for BOND and MUNI security types. '
+  'Formula: current_face_value × (1 + coupon_rate). '
+  'NULL for all other product types and for bonds with no coupon record. '
+  'Precision: DECIMAL(18,6). Currency follows bond_face_currency_code.';
+```
+
+**IMPORTANT**: Do NOT use `b.principal_amount` or `b.accrued_interest_rate` — these columns
+do not exist in `statestreet.s_statestreet.bond`. Use the proxy formula above.
 
 ---
 

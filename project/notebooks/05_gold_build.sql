@@ -188,6 +188,7 @@ SELECT
   lr.effective_from_date                             AS latest_rating_date,
   lr.rating_agency                                   AS latest_rating_agency,
   lr.product_rating_type_id                          AS latest_rating_type_id,
+
   -- ── Pipeline provenance ───────────────────────────────────────────────────
   p._dq_rule_version,
   current_timestamp()                                AS _gold_built_at
