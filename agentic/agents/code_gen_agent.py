@@ -301,6 +301,9 @@ def _extract_code_block(text: str, marker: str) -> str:
             inside = True
             continue
         if inside:
+            # Stop at another section marker (### ...) — this is the next block
+            if line.startswith("###") and line.strip() != marker:
+                break
             if line.strip().startswith("```") and not code_lines:
                 continue  # opening fence
             if line.strip() == "```" and code_lines:

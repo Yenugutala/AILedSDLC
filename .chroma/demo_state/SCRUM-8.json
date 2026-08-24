@@ -1,0 +1,25 @@
+{
+  "ticket_key": "SCRUM-8",
+  "session_id": "demo-5fa0be28",
+  "completed_beats": [
+    "beat2",
+    "beat3",
+    "beat4"
+  ],
+  "artifacts": {
+    "beat2": {
+      "question": "Looking at the silver bond table `statestreet.s_statestreet.bond`, is `accrued_interest_rate` stored as a decimal (e.g., 0.05 for 5%) or as a percentage (e.g., 5.00), because the formula `principal_amount \u00d7 (1 + accrued_interest_rate)` produces wildly different results depending on the scale, and applying it to a percentage-scale value would overstate net_settlement_amount by roughly 100x?",
+      "answer": "decimal (e.g., 0.05 for 5%)",
+      "jira_comment_id": "10020"
+    },
+    "beat3": {
+      "build_ready_comment_id": "10021"
+    },
+    "beat4": {
+      "notebook_path": "project/notebooks/05_gold_build.sql",
+      "test_path": "project/tests/test_gold.py",
+      "sign_off_comment_id": "10022"
+    }
+  },
+  "updated_at": "2026-08-24T14:55:45"
+}

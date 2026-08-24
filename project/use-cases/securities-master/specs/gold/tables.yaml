@@ -10,5 +10,6 @@ tables:
     description: "Net cash amount due at settlement for bond and muni security types,\
       \ calculated as principal_amount \xD7 (1 + accrued_interest_rate) from silver\
       \ bond source data. Populated only where security type is bond or muni and is_current\
-      \ = TRUE (REQ-01, REQ-02, REQ-03, REQ-04)."
+      \ = TRUE (active security version). Introduced per REQ-01/REQ-02 to support\
+      \ settlement cash flow reporting in the Gold Securities Master Table."
     nullable: true
