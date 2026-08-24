@@ -35,8 +35,15 @@ def run(
     ctx: TicketContext,
     metrics: MetricsTracker,
     repo_root: Path,
+    feedback: str | None = None,
 ) -> DeployContext:
     console.rule("[bold cyan]Beat 4b · Deploy[/]")
+    if feedback:
+        console.print(Panel(
+            f"[dim]Incorporating your feedback:[/] [yellow]{feedback}[/]",
+            title="[yellow]↩ Retry with Feedback[/]",
+            border_style="yellow",
+        ))
     console.print(Panel(
         "[bold]🤖 Agent:[/] [bold cyan]Deploy Agent[/]\n"
         "[dim]Role:[/]   Publishes generated code to Git, deploys Databricks bundle, runs gold job\n"
@@ -115,6 +122,12 @@ def run(
         ))
         metrics.emit_log("beat4b", f"Job skipped: {e}", "warn")
 
+    # ── Sub-step D: Run generated test suite ───────────────────────────
+    if result.job_ran:
+        console.print("[bold]Step D:[/] Running generated test suite against live gold table...")
+        metrics.emit_log("beat4b", "Running pytest on generated test_gold.py...")
+        _run_tests(repo_root, metrics)
+
     metrics.record(
         beat_id="beat4b",
         name="Deploy Agent",
@@ -127,3 +140,63 @@ def run(
     )
 
     return result
+
+
+def _run_tests(repo_root: Path, metrics: MetricsTracker) -> None:
+    """Run pytest on the generated gold test file. Gracefully skips if not available."""
+    import subprocess
+    import re
+
+    test_file = repo_root / "project" / "tests" / "test_gold.py"
+    if not test_file.exists():
+        console.print("[dim]  No test file found — skipping test run.[/]")
+        return
+
+    try:
+        result = subprocess.run(
+            ["python", "-m", "pytest", str(test_file), "-v", "--tb=short", "--no-header", "-q"],
+            capture_output=True, text=True, timeout=120,
+        )
+        output = result.stdout + result.stderr
+
+        # Parse per-test results: "PASSED test_gold.py::test_req_01" / "FAILED ..."
+        passed, failed = [], []
+        for line in output.splitlines():
+            m = re.search(r"(PASSED|FAILED)\s+.*::(test_\w+)", line)
+            if m:
+                (passed if m.group(1) == "PASSED" else failed).append(m.group(2))
+
+        # Build result lines
+        lines = []
+        for fn in passed:
+            req = fn.replace("test_", "").replace("_", "-").upper()
+            lines.append(f"  [green]✅ {req}[/]  ({fn})")
+        for fn in failed:
+            req = fn.replace("test_", "").replace("_", "-").upper()
+            lines.append(f"  [red]❌ {req}[/]  ({fn})")
+
+        status_color = "green" if not failed else "red"
+        status_title = (
+            f"[green]✓ All {len(passed)} tests passed[/]"
+            if not failed
+            else f"[red]{len(failed)} test(s) failed[/]"
+        )
+        console.print(Panel(
+            "\n".join(lines) if lines else "[dim](no test results parsed)[/]",
+            title=f"[{status_color}]{status_title}[/] — Test Suite",
+            border_style=status_color,
+        ))
+        metrics.emit_log(
+            "beat4b",
+            f"Tests: {len(passed)} passed, {len(failed)} failed",
+            "pass" if not failed else "fail",
+        )
+    except FileNotFoundError:
+        console.print("[yellow]  ⚠ pytest not found — skipping test run.[/]")
+        metrics.emit_log("beat4b", "pytest not found — test run skipped", "warn")
+    except subprocess.TimeoutExpired:
+        console.print("[yellow]  ⚠ Test run timed out (120s) — skipping.[/]")
+        metrics.emit_log("beat4b", "Test run timed out", "warn")
+    except Exception as e:
+        console.print(f"[yellow]  ⚠ Test run skipped: {e}[/]")
+        metrics.emit_log("beat4b", f"Test run skipped: {e}", "warn")

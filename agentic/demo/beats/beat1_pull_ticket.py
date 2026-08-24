@@ -71,12 +71,18 @@ def run(jira: JiraClient, metrics: MetricsTracker) -> TicketContext:
 
     metrics.emit_log("beat1", f"Selected {ticket.key}: {ticket.summary}")
 
-    # Show full ticket details
+    # Show full ticket details including description as Business Requirements Document
     console.print(Panel(
         _format_ticket(ticket),
         title=f"[bold blue]{ticket.key}[/] · {ticket.summary}",
         border_style="blue",
     ))
+    doc_len = len(ticket.description)
+    if doc_len:
+        console.print(
+            f"[green]  ✓ Business Requirements Document read ({doc_len} chars) "
+            f"— indexed into knowledge base[/]"
+        )
 
     metrics.record(
         beat_id="beat1",
@@ -99,9 +105,15 @@ def _format_ticket(t: JiraTicket) -> str:
         f"[bold]Priority:[/]  {t.priority}",
         f"[bold]Assignee:[/]  {t.assignee}",
         f"[bold]Labels:[/]    {', '.join(t.labels) or 'none'}",
-        "",
-        "[bold]Requirements:[/]",
     ]
+
+    # Show description as Business Requirements Document
+    if t.description:
+        desc = t.description.strip()
+        truncated = desc[:600] + "…" if len(desc) > 600 else desc
+        lines += ["", "[bold]Business Requirements Document:[/]", f"[dim]{truncated}[/]"]
+
+    lines += ["", "[bold]Structured Requirements:[/]"]
     for r in t.requirements:
         lines.append(f"  [cyan]{r.id}[/]  {r.text}")
     if not t.requirements:

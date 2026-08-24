@@ -105,7 +105,11 @@ def run(repo_root: Path, chroma_path: Path, ticket_key: Optional[str] = None, ti
         ("project/tests/*.py",           "test"),
         ("project/docs/*.md",            "doc"),
         ("project/specs/*.md",           "doc"),
+        # Skills: root level + all subdirectories (data_dictionary, ontology, etc.)
         ("project/skills/*.md",          "knowledge"),
+        ("project/skills/**/*.md",       "knowledge"),
+        # Auto-generated join map from sml profile
+        ("project/use-cases/**/join_map.yaml", "join_map"),
         ("CLAUDE.md",                    "standards"),
     ]
 

@@ -33,8 +33,15 @@ def run(
     jira: JiraClient,
     metrics: MetricsTracker,
     repo_root: Path,
+    feedback: str | None = None,
 ) -> BuildContext:
     console.rule("[bold cyan]Beat 4 · Build + Test[/]")
+    if feedback:
+        console.print(Panel(
+            f"[dim]Incorporating your feedback:[/] [yellow]{feedback}[/]",
+            title="[yellow]↩ Retry with Feedback[/]",
+            border_style="yellow",
+        ))
     console.print(Panel(
         "[bold]🤖 Agent:[/] [bold cyan]Developer Agent[/]  →  [bold green]QA Agent[/]\n"
         "[dim]Developer Agent:[/]  Reads gold/tables.yaml + CLAUDE.md → generates 05_gold_build.sql\n"
@@ -60,7 +67,7 @@ def run(
     console.print(f"\n[dim cyan]┌─ Developer Agent · code_gen_agent · layer=gold ────────[/]")
     metrics.emit_log("beat4", "Developer Agent: generating gold layer SQL notebook...")
     with Timer() as t:
-        code_gen_agent.run(ctx_ag, layer_only="gold")   # streams live, writes 05_gold_build.sql
+        code_gen_agent.run(ctx_ag, layer_only="gold", feedback=feedback)   # streams live, writes 05_gold_build.sql
     console.print(f"[dim cyan]└─ Developer Agent complete ({t.elapsed_ms}ms) ─────────────[/]\n")
     notebook_path = "project/notebooks/05_gold_build.sql"
     metrics.record(

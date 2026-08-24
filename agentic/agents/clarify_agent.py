@@ -17,6 +17,7 @@ def run(
     ticket_key: str,
     requirements: list[dict],
     codebase_context: str,
+    feedback: str | None = None,
 ) -> tuple[str, int, int, int]:
     """
     Generate ONE codebase-grounded clarification question.
@@ -39,10 +40,18 @@ def run(
         "it should reference specific column names, table names, or patterns you found. "
         "Ask only the single most important question. No preamble, no multiple questions."
     )
+    feedback_block = (
+        f"\n\n## Human Feedback from Previous Attempt\n"
+        f"{feedback}\n"
+        f"Your previous question did not satisfy the reviewer. Please address this feedback "
+        f"and generate a better, more targeted clarifying question."
+    ) if feedback else ""
+
     user = (
         f"Ticket: {ticket_key} — {ticket_summary}\n\n"
         f"Requirements:\n{req_block}\n\n"
-        f"Relevant codebase context:\n{codebase_context}\n\n"
+        f"Relevant codebase context:\n{codebase_context}"
+        f"{feedback_block}\n\n"
         "What is your ONE critical clarifying question before starting implementation?"
     )
 

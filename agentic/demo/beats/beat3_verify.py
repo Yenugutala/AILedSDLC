@@ -29,6 +29,7 @@ from demo.tools.codebase import CodebaseRetriever
 from demo.tools.jira_client import JiraClient
 from demo.tools.metrics import MetricsTracker
 from demo.tools.schema_catalog import SchemaCatalog
+from demo.tools.data_catalog import DataCatalog
 
 console = Console()
 
@@ -54,8 +55,16 @@ def run(
     schema_catalog: SchemaCatalog,
     metrics: MetricsTracker,
     session_id: str,
+    data_catalog: DataCatalog | None = None,
+    feedback: str | None = None,
 ) -> VerifyContext:
     console.rule("[bold cyan]Beat 3 · Verify[/]")
+    if feedback:
+        console.print(Panel(
+            f"[dim]Incorporating your feedback:[/] [yellow]{feedback}[/]",
+            title="[yellow]↩ Retry with Feedback[/]",
+            border_style="yellow",
+        ))
     ticket = ctx.ticket
     result = VerifyContext()
 
@@ -133,7 +142,7 @@ def run(
     ))
     console.print("[bold]Check 3:[/] Gold spec completeness...")
 
-    check3, required_cols = _check_gold_spec_dynamic(ticket, codebase, schema_catalog, metrics)
+    check3, required_cols = _check_gold_spec_dynamic(ticket, codebase, schema_catalog, metrics, data_catalog)
     result.checks.append(check3)
     metrics.emit_check("beat3c", "Gold Spec Completeness", check3.passed, check3.detail)
     _print_check(check3)
@@ -187,7 +196,7 @@ def run(
         console.print(f"[green]  ✓ Patched gold/tables.yaml ({len(missing)} column(s) added)[/]")
 
         # Re-run Check 3
-        check3_rerun, _ = _check_gold_spec_dynamic(ticket, codebase, schema_catalog, metrics)
+        check3_rerun, _ = _check_gold_spec_dynamic(ticket, codebase, schema_catalog, metrics, data_catalog)
         check3_rerun.name = "Gold Spec Completeness (re-run)"
         result.checks[-1] = check3_rerun
         metrics.emit_check("beat3c", "Gold Spec (re-run)", check3_rerun.passed, check3_rerun.detail)
@@ -231,6 +240,7 @@ def _check_gold_spec_dynamic(
     codebase: CodebaseRetriever,
     schema_catalog: SchemaCatalog,
     metrics: MetricsTracker,
+    data_catalog: DataCatalog | None = None,
 ) -> tuple[CheckResult, list[dict]]:
     """
     Dynamic gold spec check — uses live Databricks schema catalog.
@@ -249,28 +259,42 @@ def _check_gold_spec_dynamic(
 
     from agents import check_agents
 
-    # Search live Databricks schema for columns relevant to this ticket
+    # Build schema context — prefer data_catalog (AI-profiled descriptions) over
+    # schema_catalog (raw INFORMATION_SCHEMA). Falls back to greenfield mode.
     req_query = ticket.summary + " " + " ".join(r.text for r in ticket.requirements)
 
-    if schema_catalog.available():
-        metrics.emit_log("beat3c", "Validate Spec Agent: searching live Databricks schema catalog...")
+    if data_catalog is not None and data_catalog.available():
+        # Best: AI-generated descriptions from real data values + join map
+        metrics.emit_log("beat3c", "Validate Spec Agent: searching AI data catalog (profiled from real data)...")
+        similar_cols = data_catalog.search(req_query, n=15)
+        schema_context = data_catalog.format_for_agent(similar_cols)
+        join_map_ctx = data_catalog.format_join_map()
+        schema_context = join_map_ctx + "\n\n" + schema_context
+        metrics.emit_log(
+            "beat3c",
+            f"Data catalog: {len(similar_cols)} relevant columns (top score: "
+            f"{similar_cols[0]['score'] if similar_cols else 0:.3f})"
+        )
+    elif schema_catalog.available():
+        # Fallback: raw structural schema (column names + types from INFORMATION_SCHEMA)
+        metrics.emit_log("beat3c", "Validate Spec Agent: searching schema catalog (INFORMATION_SCHEMA)...")
         similar_cols = schema_catalog.search(req_query, n=15)
         schema_context = schema_catalog.format_for_agent(similar_cols)
         metrics.emit_log(
             "beat3c",
-            f"Found {len(similar_cols)} similar columns in schema catalog (top score: "
+            f"Schema catalog: {len(similar_cols)} similar columns (top score: "
             f"{similar_cols[0]['score'] if similar_cols else 0:.3f})"
         )
     else:
         metrics.emit_log(
             "beat3c",
-            "Schema catalog not available — run `sml schema` to index Databricks INFORMATION_SCHEMA. "
-            "Proceeding with empty context (greenfield mode).",
+            "No catalog available — run `sml profile` or `sml schema`. Greenfield mode.",
             "warn",
         )
         schema_context = (
-            "EXISTING SCHEMA CATALOG: Schema catalog not indexed yet.\n"
-            "Run `sml schema` to discover existing columns from Databricks INFORMATION_SCHEMA."
+            "DATA CATALOG: Not indexed yet.\n"
+            "Run `sml profile` to discover existing columns and generate AI descriptions.\n"
+            "Run `sml schema` for raw schema only."
         )
 
     # Ask Claude: which columns are required? surface vs create?

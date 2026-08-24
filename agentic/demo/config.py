@@ -31,6 +31,11 @@ class DemoConfig:
     databricks_warehouse_id: str
     genie_space_id: str
 
+    # Langfuse observability (optional)
+    langfuse_public_key: str
+    langfuse_secret_key: str
+    langfuse_host: str
+
     # Paths
     repo_root: Path
     chroma_path: Path
@@ -52,6 +57,9 @@ def load() -> DemoConfig:
         databricks_token=_require("DATABRICKS_TOKEN"),
         databricks_warehouse_id=os.environ.get("DATABRICKS_WAREHOUSE_ID", ""),
         genie_space_id=os.environ.get("GENIE_SPACE_ID", ""),
+        langfuse_public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
+        langfuse_secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
+        langfuse_host=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
         repo_root=_REPO_ROOT,
         chroma_path=_REPO_ROOT / ".chroma",
     )

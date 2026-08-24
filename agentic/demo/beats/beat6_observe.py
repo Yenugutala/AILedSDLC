@@ -11,11 +11,12 @@ from rich.panel import Panel
 from rich.table import Table
 
 from demo.tools.metrics import MetricsTracker
+from demo.tools.langfuse_tracker import LangfuseTracker
 
 console = Console()
 
 
-def run(metrics: MetricsTracker, dashboard_url: str):
+def run(metrics: MetricsTracker, dashboard_url: str, langfuse: LangfuseTracker | None = None):
     console.rule("[bold cyan]Beat 6 · Observe[/]")
 
     # Emit final summary to dashboard
@@ -75,6 +76,34 @@ def run(metrics: MetricsTracker, dashboard_url: str):
     ))
 
     console.print(f"\n[bold]Live Dashboard:[/] [blue underline]{dashboard_url}[/]")
+
+    # ── Langfuse trace URL ────────────────────────────────────────────
+    if langfuse and langfuse.enabled:
+        # Post all beat records to Langfuse then flush
+        for r in records:
+            langfuse.record_beat(
+                name=r.name,
+                model=r.model,
+                input_tokens=r.input_tokens,
+                output_tokens=r.output_tokens,
+                latency_ms=r.latency_ms,
+                status=r.status,
+            )
+        trace_url = langfuse.flush_and_get_url()
+        if trace_url:
+            console.print(Panel(
+                f"[bold]Trace URL:[/] [blue underline]{trace_url}[/]\n\n"
+                "[dim]Every agent step · Full token breakdown · Cost per outcome\n"
+                "Share this URL with stakeholders to demonstrate full auditability.[/]",
+                title="[bold magenta]🔍 Langfuse — Every Step Traced[/]",
+                border_style="magenta",
+            ))
+    else:
+        console.print(
+            "[dim]  Langfuse not configured — set LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY in .env "
+            "for cloud trace view[/]"
+        )
+
     console.print(
         "\n[bold cyan]sml ask[/]  — open the knowledge agent for audience Q&A\n"
         "[bold cyan]sml change \"<instruction>\"[/]  — propose a code change\n"

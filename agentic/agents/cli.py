@@ -13,6 +13,8 @@ Usage:
 
     # Demo commands
     sml index                          # Index codebase into ChromaDB
+    sml schema                         # Index live Databricks schema catalog
+    sml profile                        # Profile tables + generate AI column descriptions + join map
     sml demo                           # Run the 6-beat live demo
     sml ask                            # Knowledge agent REPL (audience Q&A)
     sml change "rename column x to y"  # Propose a code change via RAG
@@ -151,9 +153,11 @@ def index_cmd():
     """
     from demo.config import load
     from demo.knowledge.indexer import run as index_run
+    from demo.knowledge.index_state import IndexState
     from rich import print as rprint
     conf = load()
     total = index_run(repo_root=conf.repo_root, chroma_path=conf.chroma_path)
+    IndexState(conf.chroma_path).mark_codebase_indexed()
     rprint(f"[green]  ✓ Indexed {total} chunks into {conf.chroma_path}[/]")
 
     # Also refresh schema catalog if Databricks is configured
@@ -203,6 +207,41 @@ def schema_cmd():
         chroma_path=conf.chroma_path,
     )
     rprint(f"[green]  ✓ Schema catalog ready: {n} columns indexed from statestreet catalog[/]")
+
+
+@main.command(name="profile")
+def profile_cmd():
+    """
+    Profile the live Databricks catalog — generate AI column descriptions + join map.
+
+    For every column in statestreet.* (bronze, silver, gold):
+      - Measures null %, cardinality, and sample values from real data
+      - Sends the data profile to Claude → generates a business description
+        based on ACTUAL data values (not static documentation)
+      - Detects join keys: columns that appear in multiple tables
+      - Builds a join map showing how tables relate to each other
+      - Indexes everything into ChromaDB collection "data_catalog"
+      - Writes join_map.yaml to use-cases/securities-master/
+
+    Run after schema changes or whenever you want fresh AI-generated column descriptions.
+    Requires: DATABRICKS_HOST, DATABRICKS_TOKEN, DATABRICKS_WAREHOUSE_ID
+    """
+    from demo.config import load
+    from agents import data_profiler_agent
+    from rich import print as rprint
+    conf = load()
+    warehouse_id = getattr(conf, "databricks_warehouse_id", None)
+    if not warehouse_id:
+        rprint("[red]  DATABRICKS_WAREHOUSE_ID not set in .env[/]")
+        raise SystemExit(1)
+    n = data_profiler_agent.run(
+        databricks_host=conf.databricks_host,
+        databricks_token=conf.databricks_token,
+        warehouse_id=warehouse_id,
+        chroma_path=conf.chroma_path,
+    )
+    rprint(f"[green]  ✓ Data catalog ready: {n} columns profiled and indexed[/]")
+    rprint("[dim]  join_map.yaml written to use-cases/securities-master/[/]")
 
 
 @main.command(name="ask")

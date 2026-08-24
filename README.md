@@ -1,62 +1,455 @@
-# Securities Master Data Lakehouse — Agentic Code Generation Pipeline
+# AI-Led Data Lifecycle (AI-DLC) — Securities Master Lakehouse
 
-An AI-powered pipeline that generates production-ready Databricks notebooks, tests, and
-documentation from a single YAML specification file. Powered by Claude Sonnet 4.6 and
-orchestrated through a 7-stage BMAD agent loop with human approval gates at every stage.
-
----
-
-## Overview
-
-You describe your data pipeline in `request.yaml`. The agents do the rest:
-
-1. **BA Agent** reads the spec and produces 6 YAML spec files (Bronze, Silver, Gold schemas + DQ rules)
-2. **Architect Agent** reviews and finalizes the specs
-3. **Developer Agent** writes the Databricks notebooks (PySpark for Bronze, SQL for Silver/Gold)
-4. **QA Agent** writes pytest test files for all three layers
-5. **Doc Agent** generates data lineage, HLD, and Genie SQL comments
-6. **Deploy Agent** commits all outputs and raises a GitHub PR
-
-After merging the PR you run `sml deploy` to push to Databricks and `sml run` to trigger the pipeline.
+> A Jira ticket triggers an AI agent pipeline that produces deployed, production-ready Databricks
+> code. Every agent is grounded in real codebase knowledge, live Databricks schema, and domain
+> skills. Nothing is hardcoded — all knowledge is retrieved from ChromaDB at runtime.
 
 ---
 
-## Architecture
+## The Use Case
+
+**Client:** State Street Corporation
+
+**Problem:** Adding a new analytics column to the Gold layer requires engineers to manually trace
+data through Bronze → Silver → Gold, write notebooks, tests, and docs, raise a PR, deploy, and
+run jobs. This takes **days per change**.
+
+**Solution:** A Jira ticket drives an AI agent pipeline that does all of it in one session.
+
+**ONE ticket. One `sml demo` run. Jira → live data in Databricks.**
+
+---
+
+## System Architecture
 
 ```
-request.yaml
-     │
-     ▼
- BA Agent ──────────────► 6 YAML spec files
-     │                    (bronze/silver/gold ×
-     │                     tables.yaml + rules.yaml)
-     ▼
-Architect Agent ─────────► reviewed + finalized specs
-     │
-     ▼
-Developer Agent ──────────► project/notebooks/
-     │                       ├── bronze_ingest.py   (PySpark)
-     │                       ├── silver_conform.sql (SQL)
-     │                       └── gold_build.sql     (SQL)
-     ▼
- QA Agent ────────────────► project/tests/
-     │                       ├── test_bronze.py
-     │                       ├── test_silver.py
-     │                       └── test_gold.py
-     ▼
-Doc Agent ────────────────► project/docs/
-     │                       ├── lineage.md
-     │                       ├── hld.md
-     │                       └── genie_comments.sql
-     ▼
-Deploy Agent ─────────────► GitHub PR
-     │
-     ▼  (merge PR)
-Databricks ───────────────► Bronze → Silver → Gold
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║                         AI-DLC AGENT PIPELINE                                   ║
+╠══════════════════════════════════════════════════════════════════════════════════╣
+║                                                                                  ║
+║  EXTERNAL SYSTEMS              KNOWLEDGE LAYER              AGENT BEATS          ║
+║  ───────────────               ───────────────              ───────────          ║
+║                                                                                  ║
+║  ┌──────────┐                 ┌─────────────────────┐                           ║
+║  │  JIRA    │────────────────►│   ChromaDB          │                           ║
+║  │ Tickets  │  ticket text    │                     │   Beat 1: BA (Pull)       ║
+║  └──────────┘  indexed        │  Collection:        │   Beat 2: BA (Clarify)    ║
+║                               │  "ai-dlc"           │   Beat 3: Verify ×3       ║
+║  ┌──────────┐                 │                     │   Beat 4: Dev + QA        ║
+║  │DATABRICKS│────────────────►│  • Notebooks        │   Beat 4b: Deploy         ║
+║  │   DATA   │ Data profiling  │  • Spec YAMLs       │   Beat 5: Genie           ║
+║  │ CATALOG  │ + column        │  • Jira ticket      │   Beat 6: Observe         ║
+║  └──────────┘  descriptions   │  • CLAUDE.md        │                           ║
+║                               │  • Skills           │                           ║
+║  ┌──────────────────────────┐ │                     │   ⏸ Human gate after      ║
+║  │  project/skills/         │ │  Collection:        │      each beat            ║
+║  │  • Domain knowledge     │►│  "data_catalog"     │                           ║
+║  │  • DQ patterns          │ │                     │                           ║
+║  │  • Engineering guides   │ │  • AI-generated     │                           ║
+║  │  • Governance standards │ │    column desc.     │                           ║
+║  │  + more skill files     │ │  • Data profile     │                           ║
+║  └──────────────────────────┘ │  • Join key map     │                           ║
+║                               └─────────────────────┘                           ║
+║                                                                                  ║
+║  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ ║
+║  │CLAUDE.md │  │ GitHub   │  │Databricks│  │  Genie   │  │ Dashboard        │ ║
+║  │Standards │  │ PR + Git │  │Bundle CLI│  │ REST API │  │ localhost:8765   │ ║
+║  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘ ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
 ```
 
-Each stage pauses for human approval before advancing. Type `approve` to proceed or
-`reject: <reason>` to re-run the stage with feedback.
+---
+
+## Knowledge Layer — What Goes Into ChromaDB
+
+### Catalog Priority (used in Beat 3 spec validation)
+
+```
+sml profile ran?  → data_catalog    (BEST: AI descriptions from real data + join map)
+sml schema ran?   → schema_catalog  (GOOD: raw column names + types from INFORMATION_SCHEMA)
+neither ran?      → Greenfield mode (Claude reasons from ticket text alone)
+```
+
+### Collection: `ai-dlc` (Codebase + Skills)
+
+Built by `sml index`. Every file is chunked (800 chars, 20% overlap) and embedded with
+`sentence-transformers/all-MiniLM-L6-v2`.
+
+```
+project/skills/                     ← All domain knowledge files (14+ skill files)
+project/notebooks/*.py / *.sql      ← Generated notebooks (actual code patterns)
+project/use-cases/**/*.yaml         ← All spec YAMLs (bronze, silver, gold tables + rules)
+project/docs/*.md                   ← Generated documentation
+CLAUDE.md                           ← Coding standards and naming conventions
+Jira ticket text                    ← Indexed automatically after Beat 1 ticket selection
+```
+
+### Collection: `data_catalog` (AI-Profiled Data — Preferred)
+
+Built by `sml profile`. Profiles every column from actual Databricks data. Generates LLM
+descriptions from real data values, not static documentation. Detects join relationships
+automatically by finding columns that appear across multiple tables.
+
+```
+Per column stored:
+  • null %              ← from COUNT / COUNT(col) SQL
+  • cardinality         ← COUNT(DISTINCT col) SQL
+  • sample values       ← top-5 values or MIN/MAX for numeric columns
+  • AI description      ← Claude Haiku reads the profile → writes business description
+  • is_join_key         ← True if column appears in 2+ tables
+  • join_tables         ← list of tables it links
+
+Also produces join_map.yaml:
+  Documents how tables are related (auto-detected from shared column names)
+```
+
+### Collection: `schema_catalog` (Fallback — Raw Schema)
+
+Built by `sml schema`. Queries `INFORMATION_SCHEMA.COLUMNS` for the full live Databricks schema.
+
+```
+Each document = one column from the live Databricks lakehouse:
+  Text:     "<catalog>.<schema>.<table>.<column>: <comment or data_type>"
+  Metadata: { layer: "silver|bronze|gold", table: "...", column: "...", data_type, nullable }
+
+Used by Beat 3 Check 3 to determine:
+  Does this column already exist in the lakehouse?
+  If yes → surface it from the existing layer.
+  If no  → propose a new column with an inferred definition.
+```
+
+---
+
+## Agent Internal Flows
+
+### Beat 1 — BA Agent: Pull Ticket
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  INPUT                                                          │
+│  Jira credentials from .env                                     │
+│  JIRA_URL / JIRA_USERNAME / JIRA_API_TOKEN                      │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 1: Fetch open tickets                                     │
+│  GET /rest/api/3/search?jql=project=SCRUM AND status=Open      │
+│  → Returns list of issues with summary, status, priority        │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 2: Display ticket list to user                            │
+│  User selects ticket number from the list                       │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 3: Fetch full ticket                                      │
+│  GET /rest/api/3/issue/{ticket_key}                             │
+│  → Returns ADF (Atlassian Document Format) description          │
+│  → ADF parser extracts structured requirements table            │
+│     Outputs: TicketContext { key, summary, requirements[] }     │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 4: Index ticket into ChromaDB                             │
+│  ticket_text = summary + description + all REQ text             │
+│  → chunked + upserted into "ai-dlc" collection                  │
+│  → enables downstream agents to search ticket requirements      │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+                  ⏸ HUMAN GATE
+            Engineer reviews parsed REQs
+                 Types: approve
+```
+
+---
+
+### Beat 2 — BA Agent: Clarify
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  INPUT: TicketContext (ticket key + parsed requirements)         │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 1: Vector search ChromaDB "ai-dlc"                        │
+│  Query: ticket summary + all requirement text concatenated      │
+│                                                                 │
+│  Top results retrieved (ranked by semantic similarity):         │
+│  • Relevant skill files (domain terminology, DQ patterns)       │
+│  • Matching spec YAMLs (bronze, silver, gold layer schemas)     │
+│  • Existing generated notebooks (code patterns already in use)  │
+│  • Standards from CLAUDE.md                                     │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 2: Build Claude prompt                                    │
+│  System: "You are a BA Agent. Ask the ONE most important        │
+│           clarification question needed to safely build this.   │
+│           You have the following codebase context."             │
+│  User:   Ticket summary + requirements                          │
+│          + retrieved codebase chunks                            │
+│                                                                 │
+│  Claude reasons from the retrieved knowledge to generate        │
+│  a grounded clarification question — not a generic one          │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 3: Post to Jira                                           │
+│  POST /rest/api/3/issue/{ticket_key}/comment                    │
+│  Body: Clarification question written to the ticket             │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+                  ⏸ HUMAN GATE
+         Engineer reads question, types answer in terminal
+                 Types: approve
+```
+
+---
+
+### Beat 3 — Verify Agents (3 Checks)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  INPUT: TicketContext + clarification Q&A                       │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+    CHECK 1        CHECK 2        CHECK 3
+  BA Agent       Architect      Validate Spec
+  (Clarity)     (Conformance)     Agent
+
+┌────────────┐  ┌────────────┐  ┌──────────────────────────────┐
+│ Input:     │  │ Input:     │  │ Input: ticket + data catalog  │
+│ REQs +     │  │ ticket +   │  │                              │
+│ clarif. A  │  │ CLAUDE.md  │  │ STEP A: Reset gold spec      │
+│            │  │            │  │  gold/tables.yaml → empty    │
+│ Claude Q:  │  │ Claude Q:  │  │  (ensures fresh demo run)    │
+│ "Are reqs  │  │ "Does this │  │                              │
+│ clear and  │  │ conform to │  │ STEP B: Semantic search       │
+│ specific   │  │ naming,    │  │  Query: requirement text      │
+│ enough?"   │  │ language   │  │  Collection: "data_catalog"  │
+│            │  │ split, no  │  │  or "schema_catalog"         │
+│ Output:    │  │ dim_/fact_ │  │  → finds similar columns in  │
+│ PASS / FAIL│  │ prefix?"   │  │    the live lakehouse        │
+│            │  │            │  │                              │
+│            │  │ Output:    │  │ STEP C: Call Claude           │
+│            │  │ PASS / FAIL│  │  System: "Identify the ONE   │
+│            │  │            │  │   primary metric required.   │
+│            │  │            │  │   Surface from silver or     │
+└────────────┘  └────────────┘  │   create new?"               │
+                                │  User: REQs + schema context  │
+                                │                              │
+                                │  Claude decides:             │
+                                │  • Column exists in silver   │
+                                │    → action = "surface"      │
+                                │  • Column is new             │
+                                │    → action = "create"       │
+                                │                              │
+                                │ STEP D: Check gold spec      │
+                                │  Is the required column in   │
+                                │  gold/tables.yaml?           │
+                                │  → NO (was reset) → FAIL     │
+                                │                              │
+                                │ STEP E: Auto-fix             │
+                                │  Add column definition to    │
+                                │  gold/tables.yaml            │
+                                │                              │
+                                │ STEP F: Re-check → PASS      │
+                                └──────────────────────────────┘
+                       │
+                       ▼
+              All 3 checks PASS
+                       │
+                       ▼
+         Build-ready stamp posted to Jira ticket
+                       │
+                       ▼
+                  ⏸ HUMAN GATE
+              Types: approve
+```
+
+---
+
+### Beat 4 — Developer Agent + QA Agent
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  INPUT: Updated gold/tables.yaml + ticket requirements          │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+          ┌────────────┴────────────┐
+          ▼                         ▼
+  DEVELOPER AGENT             QA AGENT
+
+┌────────────────────────┐  ┌─────────────────────────────────┐
+│ STEP 1: Vector search  │  │ STEP 1: Reads generated SQL     │
+│  Collection: "ai-dlc"  │  │                                 │
+│  Query: gold spec      │  │ STEP 2: Vector search           │
+│         + ticket       │  │  Collection: "ai-dlc"           │
+│                        │  │  Query: test patterns for       │
+│  Top results:          │  │   the generated layer           │
+│  • Engineering skills  │  │  → testing_patterns.md          │
+│    (MERGE INTO, CASE)  │  │  → dq_patterns.md               │
+│  • Known issues /      │  │                                 │
+│    column mappings     │  │ STEP 3: Build Claude prompt     │
+│  • Existing notebooks  │  │  "Generate pytest for all REQs  │
+│    (existing patterns) │  │   using these test patterns"    │
+│  • Domain skills       │  │                                 │
+│                        │  │ STEP 4: Generates test file     │
+│ STEP 2: Build prompt   │  │  Covers each requirement with   │
+│  System: "You are a    │  │  positive + negative test cases │
+│  Developer Agent. Gen  │  │                                 │
+│  Gold SQL per CLAUDE.md│  └─────────────────────────────────┘
+│  + skills context"     │
+│                        │
+│ STEP 3: Claude writes  │
+│  Gold SQL notebook:    │
+│  • CREATE OR REPLACE   │
+│  • MERGE INTO pattern  │
+│  • TBLPROPERTIES       │
+│    (iceberg UniForm)   │
+│  • COMMENT ON TABLE    │
+│  • COMMENT ON COLUMN   │
+│    (Genie-readable)    │
+└────────────────────────┘
+                       │
+                       ▼
+                  ⏸ HUMAN GATE
+              Types: approve
+```
+
+---
+
+### Beat 4b — Deploy Agent
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  INPUT: All files in project/ (generated notebooks + spec)      │
+│  No LLM calls — pure tooling                                    │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+       STEP A        STEP B       STEP C
+       Git + PR    Bundle Deploy  Job Trigger
+
+┌────────────┐  ┌────────────┐  ┌────────────────────────────┐
+│ GitPython  │  │ Databricks │  │ databricks bundle run      │
+│            │  │ CLI        │  │ <job_name> --no-wait        │
+│ git add    │  │            │  │                            │
+│ git commit │  │ bundle     │  │ Returns immediately —      │
+│ git push   │  │ validate   │  │ fire-and-forget submission  │
+│            │  │ ↓          │  │                            │
+│ gh pr      │  │ bundle     │  │ Monitor progress in        │
+│ create     │  │ deploy     │  │ Databricks UI → Jobs       │
+│ → PR URL   │  │            │  │                            │
+└────────────┘  └────────────┘  └────────────────────────────┘
+                       │
+                       ▼
+                  ⏸ HUMAN GATE
+              Types: approve
+```
+
+---
+
+### Beat 5 — Genie (Natural Language → Live Data)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  INPUT: Natural language question about the Gold table          │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Databricks Genie REST API                                      │
+│  POST /api/2.0/genie/spaces/{space_id}/start-conversation      │
+│  Body: { message: "<natural language question>" }               │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Genie AI (hosted in Databricks)                               │
+│  • Reads COMMENT ON TABLE/COLUMN written by Developer Agent    │
+│  • Those comments teach Genie about the table's business domain│
+│  • Generates SQL from the natural language question            │
+│  • Executes against the live Gold table                        │
+│  • Returns result rows                                         │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  RESULT: Live rows from the Gold table                          │
+│  End-to-end: Jira ticket → deployed code → queryable live data  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Coding Standards (CLAUDE.md — read by every agent)
+
+| Rule | Standard |
+|------|----------|
+| Bronze notebooks | **PySpark** (Python) — CSV → Delta, MERGE INTO, rescuedData |
+| Silver notebooks | **SQL** (Databricks SQL) — DQ assertions + SCD2 MERGE |
+| Gold notebooks | **SQL** (Databricks SQL) — JOIN + window functions |
+| Unity Catalog | 3-part names: `catalog.schema.table` |
+| Idempotency | Always `MERGE INTO` — never `INSERT OVERWRITE` |
+| Timestamps | `current_timestamp()` — never `NOW()` or `GETDATE()` |
+| Regex | `RLIKE` — never `REGEXP_LIKE` or `LIKE` with wildcards |
+| Iceberg | All gold tables: `TBLPROPERTIES ('delta.universalFormat.enabledFormats' = 'iceberg')` |
+| Gold table name | No `dim_`/`fact_` prefix — single wide table per use case |
+| Columns | `snake_case`, metadata columns `_`-prefixed |
+| SCD2 | `effective_start_date`, `effective_end_date`, `is_current` on Silver + Gold |
+
+**Enforced at Beat 3 Check 2.** If the proposed change violates these, Check 2 fails.
+
+---
+
+## Data Flow: Bronze → Silver → Gold
+
+```
+/Volumes/<catalog>/<schema>/<volume>/ (source files)
+           │
+           │  Bronze Notebook (PySpark)
+           │  • Auto-detect schema from source file headers
+           │  • MERGE INTO on primary key (idempotent)
+           │  • Add pipeline metadata: _ingestion_ts, _source_file, _batch_id, _row_hash
+           │  • rescuedData column catches schema drift automatically
+           ▼
+<catalog>.b_<schema>.* (Bronze Delta tables)
+           │
+           │  Silver Notebook (Databricks SQL)
+           │  • DQ rules evaluated as SELECT assertions
+           │  • Failed rows → *_rejects table with failure_reason
+           │  • SCD2 MERGE: effective_start_date, effective_end_date, is_current
+           │  • _dq_rule_version tracks which rule version was applied
+           ▼
+<catalog>.s_<schema>.* (Silver tables + _rejects tables)
+           │
+           │  Gold Notebook (Databricks SQL)
+           │  • JOIN across Silver tables on shared keys
+           │  • Filter: is_current = TRUE (active versions only)
+           │  • Business metrics derived from Silver source columns
+           │  • COMMENT ON TABLE/COLUMN (Genie AI context)
+           ▼
+<catalog>.g_<schema>.<use_case_name> (single wide Gold table)
+           │
+           │  Databricks Genie AI/BI
+           │  Natural language → SQL → live results
+           ▼
+Business analysts query in plain English — no SQL required
+```
 
 ---
 
@@ -64,354 +457,91 @@ Each stage pauses for human approval before advancing. Type `approve` to proceed
 
 ```
 AILedSDLC/
-├── agentic/                        # Agent orchestration framework
+│
+├── agentic/                              ← Agent orchestration framework
 │   ├── agents/
-│   │   ├── pipeline.py             # State machine — drives agents through stages
-│   │   ├── cli.py                  # `sml` CLI entry point (Click)
-│   │   ├── ba_agent.py             # Business Analyst Agent
-│   │   ├── architect_agent.py      # Architect Agent
-│   │   ├── code_gen_agent.py       # Developer Agent (notebook generation)
-│   │   ├── test_gen_agent.py       # QA Agent (pytest generation)
-│   │   ├── doc_gen_agent.py        # Doc Agent (lineage, HLD, Genie SQL)
-│   │   ├── deploy_agent.py         # Deploy Agent (git branch, commit, PR)
-│   │   ├── debug_agent.py          # Debug Agent (uses Databricks MCP logs)
-│   │   ├── setup_agent.py          # Setup Agent (provisions Databricks workspace)
-│   │   └── validate_spec_agent.py  # Spec validation (CI use)
-│   └── pyproject.toml              # Installs the `sml` CLI command
+│   │   ├── cli.py                        ← sml CLI: demo / index / schema / profile / deploy / ...
+│   │   ├── check_agents.py               ← Beat 3: clarity + arch + validate spec
+│   │   ├── clarify_agent.py              ← Beat 2: codebase-grounded Q generation
+│   │   ├── deploy_agent.py               ← Beat 4b: git + bundle deploy + job trigger
+│   │   ├── schema_discovery_agent.py     ← Indexes live Databricks schema → ChromaDB
+│   │   ├── data_profiler_agent.py        ← Profiles columns + AI descriptions → ChromaDB
+│   │   ├── debug_agent.py                ← Diagnoses failing jobs via Databricks MCP
+│   │   └── ...
+│   │
+│   └── demo/
+│       ├── harness.py                    ← Main orchestrator: runs all 6 beats
+│       ├── beats/                        ← One file per beat
+│       ├── knowledge/
+│       │   ├── indexer.py                ← Chunks + embeds all files → ChromaDB "ai-dlc"
+│       │   └── knowledge_agent.py        ← Post-demo Q&A REPL
+│       └── tools/
+│           ├── jira_client.py            ← Jira REST + ADF parser
+│           ├── schema_catalog.py         ← Vector search over "schema_catalog" collection
+│           ├── data_catalog.py           ← Vector search over "data_catalog" collection
+│           ├── codebase.py               ← Gold spec YAML reader/writer
+│           └── genie_client.py           ← Databricks Genie REST API
 │
-├── project/                        # All project-specific content (agents write here)
-│   ├── notebooks/                  # Generated Databricks notebooks
-│   │   ├── bronze_ingest.py        # Bronze: CSV → Delta (PySpark, MERGE INTO)
-│   │   ├── silver_conform.sql      # Silver: DQ checks + SCD2 (Databricks SQL)
-│   │   └── gold_build.sql          # Gold: single wide table (all subtypes flattened, Databricks SQL)
-│   │
-│   ├── tests/                      # Generated pytest test files
-│   │   ├── test_bronze.py          # Bronze ingestion tests
-│   │   ├── test_silver.py          # Silver DQ + SCD2 tests
-│   │   └── test_gold.py            # Gold mart join/aggregate tests
-│   │
-│   ├── docs/                       # Generated documentation
-│   │   ├── lineage.md              # Column-level data lineage map
-│   │   ├── hld.md                  # High-Level Design document
-│   │   └── genie_comments.sql      # COMMENT ON TABLE/COLUMN for Databricks Genie
-│   │
-│   ├── demo/                       # Demo materials
-│   │   └── demo-overview.md        # End-to-end demo walkthrough
-│   │
-│   ├── specs/                      # Specification reference templates
-│   │   └── SPEC-TEMPLATE.md        # Template showing expected YAML format
-│   │
-│   ├── src/                        # Python source code (not generated — hand-maintained)
-│   │   ├── common/
-│   │   │   └── setup_utils.py      # SDK-based SetupManager (local, no Spark required)
-│   │   ├── ingestion/
-│   │   │   ├── bronze_loader.py    # Bronze ingestion logic
-│   │   │   ├── schema_drift.py     # Schema drift detection + rescue column handling
-│   │   │   └── source_reader.py    # CSV reader with configurable options
-│   │   └── dq/                     # Data quality framework modules
-│   │
-│   ├── skills/                     # Knowledge base read by agents before generating
-│   │   ├── build_pipeline.md       # How to structure notebooks + jobs
-│   │   ├── data_dictionary.md      # Securities domain terminology
-│   │   ├── data_engineering.md     # PySpark and SQL patterns for Databricks
-│   │   ├── dq_patterns.md          # DQ rule patterns (null check, range, referential)
-│   │   ├── known_issues.md         # Common pitfalls and workarounds
-│   │   ├── lineage_governance.md   # Unity Catalog lineage tagging patterns
-│   │   ├── ontology.md             # Securities domain ontology
-│   │   ├── orchestration.md        # Databricks Workflows + Asset Bundle patterns
-│   │   ├── performance.md          # Delta Lake optimization (Z-ORDER, liquid clustering)
-│   │   ├── schema_drift.md         # Schema evolution handling
-│   │   ├── security_governance.md  # Row/column-level security patterns
-│   │   ├── streaming_cdc.md        # Change Data Capture patterns
-│   │   └── testing_patterns.py     # Pytest patterns for Databricks notebooks
-│   │
-│   └── use-cases/
-│       └── securities-master/
-│           ├── request.yaml        # The ONLY file you author — everything else is generated
-│           ├── known_issues.md     # Use-case-specific known issues
-│           └── specs/              # Generated by BA Agent (6 YAML files)
-│               ├── bronze/
-│               │   ├── tables.yaml # Bronze table schemas (one entry per source CSV)
-│               │   └── rules.yaml  # Bronze ingestion rules
-│               ├── silver/
-│               │   ├── tables.yaml # Silver table schemas (DQ + SCD2 config)
-│               │   └── rules.yaml  # Silver DQ rules (128 rules from catalog)
-│               └── gold/
-│                   ├── tables.yaml # Gold mart schemas (dim_* and fact_* tables)
-│                   └── rules.yaml  # Gold validation rules
+├── project/
+│   ├── notebooks/                        ← Generated Databricks notebooks
+│   ├── skills/                           ← Domain knowledge (all indexed into ChromaDB)
+│   │   ├── known_issues.md               ← Column mappings, pitfalls
+│   │   └── ... (14+ skill files total)
+│   └── use-cases/securities-master/
+│       └── specs/                        ← Spec YAMLs (bronze, silver, gold)
 │
-├── .env                            # Credentials — gitignored, never commit
-├── .mcp.json                       # Databricks Genie MCP server config — gitignored
-├── .gitignore                      # Ignores .env, .mcp.json, agent_state.yaml, __pycache__
-├── CLAUDE.md                       # Coding standards and naming conventions (read by all agents)
-├── config.yml                      # Global pipeline config (catalog, model, volume path)
-└── requirements.txt                # Python dependencies
+├── CLAUDE.md                             ← Coding standards (read by every agent)
+├── README.md                             ← This file: architecture + internal flows
+├── AI_DLC.md                             ← Client-facing AI-DLC alignment document
+└── DEMO_SCRIPT.md                        ← Presenter reference: what to type at each gate
 ```
 
 ---
 
-## Agent Pipeline
-
-| Stage | Agent | Input | Output |
-|-------|-------|-------|--------|
-| `ba_review` | BA Agent | `request.yaml` + `skills/` | 6 YAML spec files |
-| `architect_review` | Architect Agent | 6 spec YAMLs | Reviewed + finalized specs |
-| `code_gen` | Developer Agent | Finalized specs | `notebooks/bronze_ingest.py`, `silver_conform.sql`, `gold_build.sql` |
-| `qa` | QA Agent | Generated notebooks | `tests/test_bronze.py`, `test_silver.py`, `test_gold.py` |
-| `doc` | Doc Agent | Generated notebooks | `docs/lineage.md`, `docs/hld.md`, `docs/genie_comments.sql` |
-| `deploy` | Deploy Agent | All outputs | GitHub PR with all generated files |
-
-The pipeline state is persisted in `use-cases/<name>/agent_state.yaml` (gitignored).
-If you interrupt a run, `sml generate` resumes from where you left off.
-
----
-
-## Security Master Data Model
-
-24-entity class-table inheritance hierarchy. The join key across all tables is `product_id`.
-
-```
-Product  (id, rf_type, type, status, settlement_type, description, issue_date, issue_price, sub_type)
-  ├── Debt  (par_value, endre_status, share_class, series, security_code)
-  │     ├── Bond  (inflation_linked, inflation_lag, reference_index_rate, conversion_rule)
-  │     │     └── Muni  (pledge_type)
-  │     └── PoolBackedSecurity  (weighted_average_coupon, net_coupon, reference_index_rate,
-  │                               weighted_average_maturity)
-  ├── Fund  (endre_status, share_class, mutual_fund_load_type, mutual_fund_type)
-  ├── Right  (exercise_style, strike_price, option_type)
-  ├── ListedDerivative  (contract_year, contract_month, contract_size, last_trade_date)
-  │     ├── Option  (option_type, exercise_style, strike_price, margin_style)
-  │     └── Future  (first_delivery_datetime_utc, last_delivery_datetime_utc, valuation_method)
-  └── Stock  (ipo_date, stock_class, has_voting_rights, depository_type)
-        ├── CommonStock  (reference_obligation)
-        └── PreferredStock  (par_value, dividend_right, is_perpetual)
-
-Supporting entities:
-  LegalEntity          (id, legal_name, formation_date, is_fin_entity, legal_structure)
-  Identifiers          (id, bloomberg_id, bloomberg_ticker, cusip, isin)
-  Classification       (id, legacy_product_id)
-  ProductRating        (id, product_id FK, rating_agency, rating_code, effective_from_date)
-  ProductRatingType    (id, rating_type_code, duration)
-  Coupon               (id, product_id FK, coupon_rule, coupon_type, is_auto_callable, call_feature)
-  PrincipalRedemption  (id, product_id FK, amount_outstanding, is_auto_callable, call_feature)
-  Currency             (id, name, is_deprecated, is_crypto_currency)
-  TickLadderScale      (id, lower_bound, tick_size)
-  Tick                 (id, scale_id FK, tick_size, price_range)
-  Series               (id, product_id FK→ListedDerivative, description)
-```
-
-Key associations:
-- `Product.id → LegalEntity.id` (issuer, 1:1)
-- `Product.id → Identifiers.id` (symbology, 1:0..1)
-- `Product.id → ProductRating.product_id` (ratings, 1:many)
-- `Bond.id → Coupon.product_id` (coupons, 1:many)
-- `Bond.id → PrincipalRedemptionProvision.product_id` (1:1)
-- `ListedDerivative.id → Series.product_id` (series, 1:many)
-
----
-
-## Unity Catalog Structure
-
-| Layer | Catalog | Schema | Example Table |
-|-------|---------|--------|---------------|
-| Bronze | `statestreet` | `b_statestreet` | `statestreet.b_statestreet.product` |
-| Silver | `statestreet` | `s_statestreet` | `statestreet.s_statestreet.product` |
-| Silver Rejects | `statestreet` | `s_statestreet` | `statestreet.s_statestreet.product_rejects` |
-| Gold | `statestreet` | `g_statestreet` | `statestreet.g_statestreet.securities_master` |
-| Volume | `statestreet` | `securities_master` | `/Volumes/statestreet/securities_master/raw_files/` |
-
-29 source CSV files live in the Volume. Bronze ingestion reads from this path.
-
-Gold produces a **single wide table** (`g_statestreet.securities_master`) — all product subtype
-attributes flattened and joined on `product_id`. No separate dim/fact tables.
-
-SCD2 tracking (Silver layer): `product`, `legal_entity`, `product_rating`
-— tracked with `effective_start_date`, `effective_end_date`, `is_current` columns.
-
----
-
-## Prerequisites
-
-| Tool | Install | Purpose |
-|------|---------|---------|
-| Python 3.9+ | [python.org](https://python.org) | Runtime |
-| Databricks CLI | `pip install databricks-cli` | Bundle deploy |
-| GitHub CLI | `brew install gh` | PR creation |
-| `gh auth login` | After installing gh | Authenticate to GitHub |
-
----
-
-## Quick Start
-
-### Step 1 — Configure credentials
-
-Copy and fill in your credentials:
+## CLI Reference
 
 ```bash
-# Edit .env with your values:
-DATABRICKS_HOST=https://dbc-xxxxxxxx.cloud.databricks.com
-DATABRICKS_TOKEN=dapi...
-DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>
-```
+# Before demo (recommended order)
+sml index          # Index codebase + skills + specs → ChromaDB "ai-dlc"
+sml schema         # Index live Databricks schema → ChromaDB "schema_catalog" (fallback)
+sml profile        # Profile tables + AI descriptions + join map → ChromaDB "data_catalog" (preferred)
 
-> Find `DATABRICKS_WAREHOUSE_ID` in Databricks UI: SQL Warehouses → your warehouse → Connection Details → HTTP Path (the ID is the last segment).
+# Demo
+sml demo           # Run the full 6-beat live demo
 
-### Step 2 — Install the CLI
+# Pipeline (standalone)
+sml generate --use-case <name>
+sml deploy   --use-case <name>
+sml run      --use-case <name> --job <job_name>
+sml status   --use-case <name> --job <job_name>
+sml debug    --use-case <name> --job <job_name>
+sml validate --use-case <name>
 
-```bash
-cd agentic
-pip install -e .
-sml --help    # verify installation
-```
-
-### Step 3 — Provision Databricks workspace
-
-```bash
-# Creates catalog, schemas, volume, and uploads your CSVs
-sml setup --local-data-dir ./data/
-```
-
-This runs entirely from your laptop using the Databricks SDK — no cluster or Spark required.
-It creates:
-- `statestreet` catalog
-- `b_statestreet`, `s_statestreet`, `g_statestreet`, `securities_master` schemas
-- `/Volumes/statestreet/securities_master/raw_files/` volume
-- Uploads all CSVs from `--local-data-dir`
-
-### Step 4 — Generate code
-
-```bash
-sml generate --use-case securities-master
-```
-
-The pipeline will walk through all 7 stages. At each stage you will see the agent output
-and be prompted:
-
-```
-[BA AGENT] Output shown above.
-Approve to continue, or type 'reject: <reason>' to re-run this stage.
-> approve
-```
-
-### Step 5 — Deploy
-
-After the Deploy Agent creates and you merge the GitHub PR:
-
-```bash
-# Validate and deploy the Databricks Asset Bundle
-sml deploy --use-case securities-master
-
-# Trigger the Bronze ingestion job
-sml run --use-case securities-master --job bronze_ingest_job
-
-# Check job status
-sml status --use-case securities-master --job bronze_ingest_job
+# Knowledge REPL
+sml ask            # Q&A against indexed codebase
 ```
 
 ---
 
-## All CLI Commands
+## Pre-Demo Checklist
 
 ```bash
-sml setup    --local-data-dir <path>        # Provision Databricks workspace
-sml generate --use-case <name>              # Run full 7-stage agent pipeline
-sml deploy   --use-case <name>              # Deploy Databricks Asset Bundle
-sml run      --use-case <name> --job <job>  # Trigger a Databricks job
-sml status   --use-case <name> --job <job>  # Check job run status
-sml debug    --use-case <name> --job <job>  # Diagnose failing job via MCP logs
-sml validate --use-case <name>              # Validate spec YAMLs against CLAUDE.md
+# 1. Install
+cd agentic && pip install -e . && cd ..
+
+# 2. Credentials in .env
+DATABRICKS_HOST / DATABRICKS_TOKEN / DATABRICKS_WAREHOUSE_ID
+JIRA_URL / JIRA_USERNAME / JIRA_API_TOKEN / GENIE_SPACE_ID
+ANTHROPIC_API_KEY
+
+# 3. Index knowledge base (run in order)
+sml index      # codebase + skills + specs → "ai-dlc"
+sml schema     # raw schema from INFORMATION_SCHEMA → "schema_catalog"   (fallback)
+sml profile    # data profiling + AI descriptions + join map → "data_catalog" (preferred)
+
+# 4. Run demo
+sml demo
 ```
 
----
-
-## Authoring a Use Case
-
-The only file you write by hand is `project/use-cases/<name>/request.yaml`. Example:
-
-```yaml
-use_case_name: securities-master
-
-description: |
-  Ingest 29 security CSV files from Databricks Volume into a Bronze/Silver/Gold medallion
-  lakehouse. Data model uses class-table inheritance — every security has one row in
-  'product' plus one row in each applicable subtype table. Join key: product_id.
-
-source:
-  type: volume
-  path: /Volumes/statestreet/securities_master/raw_files/
-  format: csv
-  delimiter: ","
-  header: true
-  tables:
-    - product
-    - bond
-    - stock
-    - fund
-    # ... (all 29 tables)
-
-catalog:
-  name: statestreet
-  bronze_schema: b_statestreet
-  silver_schema:  s_statestreet
-  gold_schema:    g_statestreet
-
-scd2_tables:
-  - product
-  - legal_entity
-  - product_rating
-
-gold_table: securities_master    # single wide table — all subtypes flattened, joined on product_id
-
-code_generation:
-  bronze: python
-  silver: sql
-  gold:   sql
-```
-
----
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DATABRICKS_HOST` | Yes | Workspace URL |
-| `DATABRICKS_TOKEN` | Yes | Personal Access Token |
-| `DATABRICKS_WAREHOUSE_ID` | Yes (for `sml setup`) | SQL Warehouse for DDL execution |
-
-> **Note:** `ANTHROPIC_API_KEY` is **not required** when using Claude Code IDE — the IDE handles
-> all AI calls. It is only needed if you run `sml generate` as a standalone CLI tool.
-
-Credentials are loaded from `.env` at the repo root. The `.env` file is gitignored — never commit it.
-
----
-
-## MCP Server (Databricks Genie)
-
-The Debug Agent uses the Databricks Genie MCP server to fetch live job logs without guessing.
-Configuration is in `.mcp.json` (gitignored). To enable:
-
-```json
-{
-  "mcpServers": {
-    "databricks-genie": {
-      "command": "npx",
-      "args": ["-y", "databricks-genie-mcp"],
-      "env": {
-        "DATABRICKS_HOST": "...",
-        "DATABRICKS_TOKEN": "...",
-        "GENIE_SPACE_ID": "..."
-      }
-    }
-  }
-}
-```
-
----
-
-## Git / Contributing
-
-- Never commit directly to `main` — always raise a PR
-- Branch naming: `feat/<use-case>-<stage>` (e.g. `feat/securities-master-silver`)
-- `agent_state.yaml` is gitignored — do not commit pipeline state
-- `.env` and `.mcp.json` are gitignored — never commit credentials
-- The Deploy Agent automates PR creation via `gh pr create` (requires `gh auth login`)
+**See [DEMO_SCRIPT.md](DEMO_SCRIPT.md) — what to type at each gate.**
+**See [AGENT_REFERENCE.md](AGENT_REFERENCE.md) — full input/output for every agent and command.**

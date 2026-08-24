@@ -2,44 +2,13 @@ tables:
 - name: securities_master
   catalog: statestreet
   schema: g_statestreet
-  description: "Gold wide table \u2014 Securities Master analytics mart."
+  description: "Gold wide table \u2014 Securities Master analytics mart. Grain: one\
+    \ row per active security version (is_current = TRUE)."
   columns:
   - name: net_settlement_amount
     type: DECIMAL(18,6)
-    description: 'REQ-01: Net cash amount due at settlement for each security. Computed
-      as principal_amount x (1 + accrued_interest_rate) per REQ-02. Populated only
-      for product_type IN (''bond'', ''muni'') per REQ-03. NULL for all other security
-      types.'
+    description: "Net cash amount due at settlement for bond and muni security types,\
+      \ calculated as principal_amount \xD7 (1 + accrued_interest_rate) from the silver\
+      \ bond layer. Populated only where security type is bond or muni and is_current\
+      \ = TRUE (REQ-01, REQ-02, REQ-03, REQ-04)."
     nullable: true
-  - name: principal_amount
-    type: DECIMAL(18,6)
-    description: "REQ-02: Face/principal amount of the security used as the base multiplicand\
-      \ in the net_settlement_amount derivation (principal_amount x (1 + accrued_interest_rate)).\
-      \ Sourced from the bond silver layer. Schema catalog was not indexed at ticket\
-      \ time \u2014 validate against silver bond table before finalising action; convert\
-      \ to surface if discovered."
-    nullable: true
-  - name: accrued_interest_rate
-    type: DECIMAL(18,6)
-    description: "REQ-02: Accrued interest rate used as the multiplier component in\
-      \ the net_settlement_amount derivation (principal_amount x (1 + accrued_interest_rate)).\
-      \ Sourced from the bond silver layer. Schema catalog was not indexed at ticket\
-      \ time \u2014 validate against silver bond table before finalising action; convert\
-      \ to surface if discovered."
-    nullable: true
-  - name: product_type
-    type: STRING
-    description: "REQ-03: Classifies the security type (e.g. 'bond', 'muni'). Used\
-      \ as the filter predicate (product_type IN ('bond', 'muni')) to gate population\
-      \ of settlement analytics fields. Schema catalog was not indexed at ticket time\
-      \ \u2014 validate across bronze/silver layers before finalising action; convert\
-      \ to surface if discovered."
-    nullable: true
-  - name: is_current
-    type: BOOLEAN
-    description: "REQ-04: SCD Type-2 currency flag. TRUE indicates the row represents\
-      \ the active, current version of the security. Gold table grain is one row per\
-      \ active security version where is_current = TRUE. Schema catalog was not indexed\
-      \ at ticket time \u2014 validate across bronze/silver layers before finalising\
-      \ action; convert to surface if discovered."
-    nullable: false

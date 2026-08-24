@@ -27,7 +27,7 @@ console = Console()
 PROMPT_FILE = Path(__file__).parent / "prompts" / "developer_agent.md"
 
 
-def run(ctx: AgentContext, layer_only: str | None = None) -> str:
+def run(ctx: AgentContext, layer_only: str | None = None, feedback: str | None = None) -> str:
     """
     Generate notebooks for all layers (or a single layer if layer_only is set).
     Used by Debug Agent for partial regeneration after a fix.
@@ -43,21 +43,50 @@ def run(ctx: AgentContext, layer_only: str | None = None) -> str:
 
     for layer in layers:
         console.print(f"[dim]  Generating {layer} notebook...[/]")
-        output = _generate_layer(client, ctx, system_prompt, layer)
+        output = _generate_layer(client, ctx, system_prompt, layer, feedback=feedback)
         outputs.append(output)
         _write_notebook(layer, output)
 
     return "\n\n---\n\n".join(outputs)
 
 
-def _generate_layer(client, ctx: AgentContext, system_prompt: str, layer: str) -> str:
+def _generate_layer(client, ctx: AgentContext, system_prompt: str, layer: str, feedback: str | None = None) -> str:
     specs_dir = REPO_ROOT / "use-cases" / ctx.use_case_name / "specs" / layer
     tables_yaml = (specs_dir / "tables.yaml").read_text() if (specs_dir / "tables.yaml").exists() else ""
     rules_yaml  = (specs_dir / "rules.yaml").read_text()  if (specs_dir / "rules.yaml").exists() else ""
 
     lang = "Python/PySpark" if layer == "bronze" else "Databricks SQL"
+
+    # Check if an existing notebook already exists — if so, instruct minimal targeted change
+    ext_map  = {"bronze": "py",     "silver": "sql",    "gold": "sql"}
+    num_map  = {"bronze": "03",     "silver": "04",     "gold": "05"}
+    name_map = {"bronze": "ingest", "silver": "conform", "gold": "build"}
+    existing_path = GENERATED_DIR / f"{num_map[layer]}_{layer}_{name_map[layer]}.{ext_map[layer]}"
+    existing_content = existing_path.read_text(encoding="utf-8") if existing_path.exists() else ""
+
+    if existing_content:
+        task_instruction = (
+            f"Make the MINIMAL targeted change to the existing notebook below to satisfy the spec.\n"
+            f"Only add or modify what the spec explicitly requires — do not rewrite, restructure, or expand scope.\n\n"
+            f"## Existing Notebook\n```{ext_map[layer]}\n{existing_content}\n```"
+        )
+    else:
+        task_instruction = (
+            f"Generate a new Databricks notebook for the {layer} layer.\n"
+            f"- Language: {lang}\n"
+            f"- All code must be Databricks Runtime compatible\n"
+            f"- Bronze: use MERGE INTO for idempotent loads; add _ingestion_ts, _source_file, _batch_id, _row_hash\n"
+            f"- Silver: apply all DQ rules; write rejects; apply SCD2; set _dq_rule_version\n"
+            f"- Gold: build dimensional marts; add COMMENT ON TABLE/COLUMN for Genie"
+        )
+
+    feedback_block = (
+        f"\n\n## Human Feedback from Previous Attempt\n{feedback}\n"
+        "Please address this feedback in your revised output."
+    ) if feedback else ""
+
     user_prompt = f"""
-# Generate {layer.title()} Notebook ({lang})
+# {layer.title()} Notebook ({lang})
 
 ## {layer.title()} tables.yaml
 ```yaml
@@ -70,12 +99,8 @@ def _generate_layer(client, ctx: AgentContext, system_prompt: str, layer: str) -
 ```
 
 ## Task
-Generate a complete Databricks notebook for the {layer} layer.
-- Language: {lang}
-- All code must be Databricks Runtime compatible
-- Bronze: use MERGE INTO for idempotent loads; add _ingestion_ts, _source_file, _batch_id, _row_hash
-- Silver: apply all DQ rules; write rejects; apply SCD2; set _dq_rule_version
-- Gold: build dimensional marts; add COMMENT ON TABLE/COLUMN for Genie
+{task_instruction}
+{feedback_block}
 - Output the notebook as a single code block prefixed: ### NOTEBOOK: {layer}
 """
 

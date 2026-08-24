@@ -45,10 +45,11 @@ def get_job_status(job_name: str):
 
 
 def trigger_job(job_name: str):
-    """Trigger a Databricks job by its bundle resource key, streaming output live."""
+    """Trigger a Databricks job by its bundle resource key (fire-and-forget)."""
     console.print(f"[bold cyan][RUN][/] Triggering job: {job_name}")
-    _run_streaming(f"databricks bundle run {job_name}", cwd=REPO_ROOT)
-    console.print(f"[green]Job finished: {job_name}[/]")
+    _run(f"databricks bundle run {job_name} --no-wait", cwd=REPO_ROOT)
+    console.print(f"[green]  ✓ Job submitted: {job_name}[/]")
+    console.print(f"[dim]  Monitor progress: Databricks → Jobs → {job_name}[/]")
 
 
 def create_pr(use_case_name: str) -> str:

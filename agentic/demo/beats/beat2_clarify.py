@@ -35,6 +35,7 @@ def run(
     jira: JiraClient,
     retriever: Retriever,
     metrics: MetricsTracker,
+    feedback: str | None = None,
 ) -> ClarificationContext:
     console.rule("[bold cyan]Beat 2 · Clarify[/]")
     console.print(Panel(
@@ -64,11 +65,19 @@ def run(
     # Call BA Agent (clarify_agent) to generate the grounded question
     metrics.emit_log("beat2", "BA Agent: generating codebase-grounded clarification question...")
     requirements = [{"id": r.id, "text": r.text} for r in ticket.requirements]
+    if feedback:
+        console.print(Panel(
+            f"[dim]Incorporating your feedback:[/] [yellow]{feedback}[/]",
+            title="[yellow]↩ Retry with Feedback[/]",
+            border_style="yellow",
+        ))
+
     question, input_tokens, output_tokens, latency_ms = clarify_agent.run(
         ticket_summary=ticket.summary,
         ticket_key=ticket.key,
         requirements=requirements,
         codebase_context=codebase_context,
+        feedback=feedback,
     )
     metrics.emit_log("beat2", f"Question generated ({input_tokens} input tokens, {latency_ms}ms)")
 

@@ -135,42 +135,35 @@ def extract_required_gold_columns(
     system = """You are a Data Architect and Data Steward for a financial data lakehouse.
 
 You have access to a live schema catalog showing ALL existing columns in the bronze, silver, and gold layers.
-The catalog was auto-discovered from Databricks INFORMATION_SCHEMA — it reflects the real state of the lakehouse.
+The catalog was auto-discovered from Databricks INFORMATION_SCHEMA.
 
-For each column implied by the ticket requirements:
+TASK: Identify the ONE PRIMARY DERIVED METRIC that this ticket is requesting to add to the gold layer.
 
-1. Search the EXISTING SCHEMA CATALOG carefully.
-2. If a similar or identical column EXISTS in bronze or silver (similarity score >= 0.6):
-   → Return action="surface".
-   → Use the EXACT column name, data type, and comment from the catalog entry.
-   → Set source_table to the full 3-part table name (e.g. statestreet.s_statestreet.bond).
-   → Meaning: "this data already exists in a lower layer — surface it in gold mart."
-3. If NO sufficiently similar column exists:
-   → Return action="create".
-   → Propose a new definition following naming conventions (snake_case).
-   → Infer sql_type from name patterns:
-       *_amount / *_price / *_rate / *_value → DECIMAL(18,6)
-       *_date / *_start_date / *_end_date → DATE
-       *_ts / *_timestamp → TIMESTAMP
-       *_id / *_key → STRING
-       *_flag / is_* / has_* / *_indicator → BOOLEAN
-       *_count / *_qty / *_quantity → INT
-       default → STRING
-   → Write a clear business description that references the requirement ID.
-   → Do NOT set source_table for created columns.
+Rules:
+- The primary metric is the main new CALCULATED or DERIVED field (e.g. a net amount, a ratio, an aggregated value).
+- IGNORE supporting source columns like product_type, is_current, SCD2 flags, identifier columns — these are standard gold table columns that already exist.
+- IGNORE filter predicates (e.g. "only for bond/muni") — these are WHERE clause conditions, not new columns.
+- IGNORE input operands (principal_amount, accrued_interest_rate) if they already exist in silver — they are source data, not gold additions.
+- Return ONLY the one PRIMARY derived metric column.
 
-Output ONLY a valid JSON array — no markdown, no explanation, no code fences:
+For the primary metric:
+1. Search the EXISTING SCHEMA CATALOG.
+2. If a very similar derived column EXISTS in silver/gold (score >= 0.7) → action="surface"
+   Use the EXACT name and type from the catalog. Set source_table.
+3. If it does NOT exist → action="create"
+   Infer sql_type: *_amount/*_price/*_rate/*_value → DECIMAL(18,6), *_date → DATE, is_*/*_flag → BOOLEAN, default → STRING.
+   Write a business description referencing the requirement ID.
+
+Output ONLY a valid JSON array with EXACTLY ONE element — no markdown, no explanation:
 [{
   "req_id": "REQ-01",
-  "action": "surface",
-  "name": "exact_column_name_from_catalog",
+  "action": "surface" or "create",
+  "name": "column_name",
   "sql_type": "DECIMAL(18,6)",
-  "description": "Business description referencing REQ-01.",
+  "description": "Business description.",
   "nullable": true,
   "source_table": "statestreet.s_statestreet.bond"
-}]
-
-CRITICAL: For action=surface, use the EXACT column name from the catalog. Never invent names."""
+}]"""
 
     user = (
         f"Ticket: {ticket_summary}\n\n"
