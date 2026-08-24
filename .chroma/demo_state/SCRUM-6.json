@@ -1,15 +1,15 @@
 {
   "ticket_key": "SCRUM-6",
-  "session_id": "demo-4c01ef19",
+  "session_id": "demo-d118fb32",
   "completed_beats": [
     "beat4b"
   ],
   "artifacts": {
     "beat4b": {
       "pr_url": "",
-      "deployed": false,
-      "job_ran": false
+      "deployed": true,
+      "job_ran": true
     }
   },
-  "updated_at": "2026-08-24T02:07:36"
+  "updated_at": "2026-08-24T13:47:01"
 }
