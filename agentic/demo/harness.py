@@ -67,6 +67,7 @@ Classify the user's message into one action. Return ONLY valid JSON (no markdown
 Examples:
   "yes / go ahead / looks good / approve" -> {"action": "approve", "beat_id": null, "reason": null, "clarifying_question": null}
   "the column name is wrong"              -> {"action": "reject", "beat_id": null, "reason": "the column name is wrong", "clarifying_question": null}
+  "retry / try again / please try again"  -> {"action": "reject", "beat_id": null, "reason": "retry", "clarifying_question": null}
   "run the deployment agent"              -> {"action": "jump", "beat_id": "beat4b", "reason": null, "clarifying_question": null}
   "skip to genie"                         -> {"action": "jump", "beat_id": "beat5", "reason": null, "clarifying_question": null}
   "run the next step"                     -> {"action": "question", "beat_id": null, "reason": null, "clarifying_question": "Which agent? Options: Verify (beat3), Build (beat4), Deploy (beat4b), Genie (beat5)"}
@@ -97,9 +98,16 @@ def _classify_hitl_intent(user_input: str, con: Console) -> tuple[str, str]:
             messages=messages,
         )
         raw = resp.content[0].text.strip()
+        # Strip markdown code fences if Haiku wraps the JSON despite instructions
+        if "```" in raw:
+            import re as _re
+            m = _re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+            if m:
+                raw = m.group(1).strip()
         try:
             data = _json.loads(raw)
         except _json.JSONDecodeError:
+            con.print(f"[dim red]  (classifier returned malformed JSON — retrying)[/]")
             return "unknown", ""
 
         action = data.get("action", "")
