@@ -18,8 +18,28 @@ REPO_ROOT = PROJECT_ROOT
 console = Console()
 
 
+_REQUIRED_NOTEBOOKS = [
+    "notebooks/03_bronze_ingest.py",
+    "notebooks/04_silver_conform.sql",
+    "notebooks/05_gold_build.sql",
+]
+
+
+def _check_notebooks():
+    """Raise a clear error if any bundle notebook is missing (SETUP-017 / ISSUE-025)."""
+    missing = [nb for nb in _REQUIRED_NOTEBOOKS if not (REPO_ROOT / nb).exists()]
+    if missing:
+        raise RuntimeError(
+            "Cannot deploy — the following notebooks are missing from project/notebooks/:\n"
+            + "\n".join(f"  ✗ {nb}" for nb in missing)
+            + "\n\nRun Beat 4 (Developer Agent) first to generate all notebooks."
+        )
+
+
 def deploy(use_case_name: str):
     """Run: databricks bundle validate + deploy."""
+    _check_notebooks()
+
     # Auto-detect local Terraform to avoid 'openpgp: key expired' checksum error
     if not os.environ.get("DATABRICKS_TF_EXEC_PATH"):
         tf = shutil.which("terraform")
@@ -46,6 +66,7 @@ def get_job_status(job_name: str):
 
 def trigger_job(job_name: str):
     """Trigger a Databricks job and wait for completion, streaming live output."""
+    _check_notebooks()
     console.print(f"[bold cyan][RUN][/] Running job: {job_name} (streaming output — waiting for completion...)")
     _run_streaming(f"databricks bundle run {job_name}", cwd=REPO_ROOT)
     console.print(f"[green]  ✓ Job completed: {job_name}[/]")

@@ -403,6 +403,33 @@ for f in project/notebooks/03_bronze_ingest.py project/notebooks/04_silver_confo
 
 ---
 
+## SETUP-018: Deploy Agent (Beat 4b) shows "Databricks CLI not configured" when notebooks are missing
+
+**Symptom**: Running Beat 4b directly (or jumping to Deploy Agent) shows a yellow warning panel:
+```
+⚠ Databricks CLI not configured
+Reason: notebook notebooks/03_bronze_ingest.py not found
+```
+The misleading title makes it look like a CLI auth issue, but the real cause is missing notebooks.
+
+**Cause**: `deploy_agent.deploy()` calls `databricks bundle validate` which fails because
+the Developer Agent (Beat 4) was never run. The exception is caught generically and displayed
+with the wrong title ("Databricks CLI not configured").
+
+**Fix (already applied)**: `deploy_agent.deploy()` and `trigger_job()` now call `_check_notebooks()`
+before touching the CLI. If any of the three notebooks are missing, a clear error is raised:
+```
+Cannot deploy — the following notebooks are missing from project/notebooks/:
+  ✗ notebooks/03_bronze_ingest.py
+  ✗ notebooks/04_silver_conform.sql
+Run Beat 4 (Developer Agent) first to generate all notebooks.
+```
+
+**What to do**: Run Beat 4 first. In `sml demo`, at any HITL prompt type:
+**"run developer agent"** → jumps to Beat 4 → generates all notebooks → then approve → Beat 4b runs.
+
+---
+
 ## SETUP-017: `databricks bundle run <job>` fails when ANY notebook in databricks.yml is missing
 
 **Symptom**: Running `databricks bundle run gold_mart_job` (or any single job) fails with:
@@ -449,3 +476,182 @@ causing the `ParseException`.
 quote and semicolon, and added the remaining missing column comments for
 `fact_product_rating` (`product_rating_type_id`, `rating_agency`, `watch_code`,
 `rating_scale`, `rating_type_code`, `product_type`, `product_status`).
+
+---
+
+## GOLD-001: `listed_derivative` has no `underlying_product_id` column
+
+**File**: `05_gold_build.sql`
+
+**Symptom**: Gold job fails with `UNRESOLVED_COLUMN: ld.underlying_product_id`.
+
+**Cause**: The `listed_derivative` CSV does not contain an `underlying_product_id` column.
+Actual columns: `product_id`, `contract_year`, `contract_month`, `contract_size`,
+`last_trade_date`, `is_flex`, `series_id`.
+
+**Fix (already applied)**: Use `CAST(NULL AS STRING) AS derivative_underlying_product_id`
+in the Gold SELECT. Only add the real column if a Jira ticket sources it from a new CSV.
+
+---
+
+## GOLD-002: `coupon` table uses `bond_id`, not `product_id`
+
+**File**: `05_gold_build.sql`
+
+**Symptom**: Gold job fails with `UNRESOLVED_COLUMN: coupon.product_id`.
+
+**Cause**: The `coupon.csv` foreign key is named `bond_id` (references `bond.product_id`),
+not `product_id` directly. This differs from all other product-subtype tables.
+
+**Fix (already applied)**: In the `latest_coupon` CTE use `bond_id AS product_id`:
+```sql
+latest_coupon AS (
+  SELECT
+    bond_id AS product_id,
+    coupon_rate,
+    payment_date AS latest_payment_date,
+    ROW_NUMBER() OVER (PARTITION BY bond_id ORDER BY payment_date DESC) AS _rn
+  FROM statestreet.s_statestreet.coupon
+)
+```
+
+---
+
+## GOLD-003: `identifiers` table is wide-format, not EAV
+
+**File**: `05_gold_build.sql`
+
+**Symptom**: Gold job fails with `UNRESOLVED_COLUMN: id_type` or `identifier_value`
+inside the `primary_identifier` CTE.
+
+**Cause**: The gold notebook assumed EAV format (`id_type`, `identifier_value` rows).
+The actual `identifiers.csv` is wide-format: one row per product with columns
+`cusip`, `isin`, `sedol`, `bloomberg_id`, `bloomberg_ticker`.
+
+**Fix (already applied)**: Use `COALESCE` and `CASE` in the CTE:
+```sql
+primary_identifier AS (
+  SELECT
+    product_id,
+    CASE
+      WHEN isin             IS NOT NULL THEN 'ISIN'
+      WHEN cusip            IS NOT NULL THEN 'CUSIP'
+      WHEN sedol            IS NOT NULL THEN 'SEDOL'
+      WHEN bloomberg_id     IS NOT NULL THEN 'BLOOMBERG_ID'
+      WHEN bloomberg_ticker IS NOT NULL THEN 'TICKER'
+      ELSE NULL
+    END AS primary_id_type,
+    COALESCE(isin, cusip, sedol, bloomberg_id, bloomberg_ticker) AS primary_identifier_value,
+    ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY product_id) AS _rn
+  FROM statestreet.s_statestreet.identifiers
+  WHERE product_id IS NOT NULL
+)
+```
+
+---
+
+## GOLD-004: ZORDER BY cannot include partition columns
+
+**File**: `05_gold_build.sql`
+
+**Symptom**: OPTIMIZE step fails with:
+```
+[DELTA_ZORDERING_ON_PARTITION_COLUMN] type is a partition column.
+Z-Ordering can only be performed on data columns. SQLSTATE: 42P10
+```
+
+**Cause**: The table is `PARTITIONED BY (type)`. Delta Lake forbids listing a partition
+column in `ZORDER BY` — it is already physically co-located.
+
+**Fix (already applied)**: Removed `type` from `ZORDER BY`:
+```sql
+OPTIMIZE statestreet.g_statestreet.securities_master
+  ZORDER BY (status, sub_type);
+```
+
+---
+
+## GOLD-005: `net_settlement_amount` — do NOT include in the base Gold notebook
+
+**File**: `05_gold_build.sql`
+
+**Background**: `net_settlement_amount` requires `bond.principal_amount` and
+`bond.accrued_interest_rate` columns that do NOT exist in the current `bond.csv`.
+Generating it as `CAST(NULL AS DECIMAL(18,6))` adds noise and misleads Genie.
+
+**Rule**: The base gold notebook must NOT contain `net_settlement_amount`.
+
+**When to add it**: Only when a Jira ticket explicitly asks for net settlement calculation
+(e.g. "compute net settlement for bonds"). The Developer Agent should then:
+1. Add `principal_amount` and `accrued_interest_rate` to the `bond.csv` source (or a new CSV)
+2. Re-ingest Bronze
+3. Re-run Silver
+4. Add the column to Gold with the formula:
+   ```sql
+   CASE
+     WHEN p.type = 'DEBT' AND p.sub_type IN ('BOND', 'MUNI')
+          AND b.principal_amount IS NOT NULL
+          AND b.accrued_interest_rate IS NOT NULL
+     THEN b.principal_amount * (1 + b.accrued_interest_rate)
+     ELSE NULL
+   END AS net_settlement_amount
+   ```
+5. Add DQ-GOLD-02 and DQ-GOLD-03 checks back
+6. Add the `COMMENT ON COLUMN` for `net_settlement_amount`
+
+---
+
+## SILVER-001: `spark.conf.set()` with custom keys blocked on serverless compute
+
+**File**: `04_silver_conform.sql`
+
+**Symptom**: Silver job fails immediately with:
+```
+CONFIG_NOT_AVAILABLE.WITHOUT_SUGGESTION: Cannot set 'sml.dq_rule_version'
+to a user-supplied value on Serverless compute.
+```
+
+**Cause**: Databricks Serverless does not permit `spark.conf.set()` with non-standard
+config keys. The original Silver notebook used this to store the DQ rule version hash.
+
+**Fix (already applied)**: Removed `spark.conf.set("sml.dq_rule_version", ...)` from the
+Silver notebook. The `_dq_rule_version` column is set directly as a literal in each
+`CREATE OR REPLACE TABLE ... AS SELECT` statement:
+```sql
+'dev-snapshot' AS _dq_rule_version
+```
+
+---
+
+## SILVER-002: Silver notebook truncates at ~880 lines — all 26 tables must be explicit
+
+**File**: `04_silver_conform.sql`
+
+**Symptom**: Agent-generated Silver notebook ends mid-DDL (e.g. inside `listed_derivative`
+table), causing a `PARSE_SYNTAX_ERROR` when deployed.
+
+**Cause**: The code generation API call hits the token budget before producing all 26 table
+definitions. The file is written truncated without any error.
+
+**Fix (already applied)**: The Silver notebook was rewritten as a simple pass-through
+(no DQ checking, no complex transformation). Each table is:
+```sql
+CREATE OR REPLACE TABLE statestreet.s_statestreet.<table>
+TBLPROPERTIES (
+  'delta.columnMapping.mode'             = 'name',
+  'delta.enableIcebergCompatV2'          = 'true',
+  'delta.universalFormat.enabledFormats' = 'iceberg'
+)
+AS
+SELECT *,
+  current_date()    AS effective_start_date,
+  DATE '9999-12-31' AS effective_end_date,
+  TRUE              AS is_current,
+  'dev-snapshot'    AS _dq_rule_version
+FROM statestreet.b_statestreet.<table>;
+```
+
+**Rule for Developer Agent**: If regenerating the Silver notebook, verify the file
+covers **all 26 tables** before writing. If the API response is truncated, split into
+multiple calls (one group of tables per call) and concatenate.
+

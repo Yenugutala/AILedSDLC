@@ -359,6 +359,26 @@ pip install -e agentic/
 
 ---
 
+## ISSUE-026: Deploy Agent shows "Databricks CLI not configured" when notebooks are missing
+
+**Symptom**: Beat 4b (Deploy Agent) shows:
+```
+⚠ Databricks CLI not configured
+Reason: notebook notebooks/03_bronze_ingest.py not found
+```
+The panel title is misleading — the CLI is working fine. The real cause is missing notebooks.
+
+**Cause**: `databricks bundle validate` fails because the Developer Agent (Beat 4) was skipped.
+The exception is caught generically and displayed under the wrong heading.
+
+**Fix (already applied)**: `deploy_agent.deploy()` and `trigger_job()` now call `_check_notebooks()`
+upfront. Missing notebooks raise a clear error before any CLI command is attempted.
+
+**Developer Agent rule**: Beat 4b must NEVER be run if `03_bronze_ingest.py`, `04_silver_conform.sql`,
+or `05_gold_build.sql` are missing. Always run Beat 4 first.
+
+---
+
 ## ISSUE-025: `databricks bundle run <job>` fails if ANY notebook in databricks.yml is missing
 
 **Symptom**: Running `databricks bundle run gold_mart_job` fails with:
