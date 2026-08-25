@@ -11,7 +11,6 @@
 # COMMAND ----------
 import os
 import requests
-import json
 
 # Get workspace URL and token from Databricks secrets (or environment)
 WORKSPACE_URL = spark.conf.get("spark.databricks.workspaceUrl", "")
@@ -34,12 +33,7 @@ GOLD_SCHEMA = "g_statestreet"
 # MAGIC %md ## Verify Gold Tables Exist
 
 # COMMAND ----------
-gold_tables = [
-    "dim_product",
-    "dim_legal_entity",
-    "fact_product_rating",
-    "fact_coupon_schedule",
-]
+gold_tables = ["securities_master"]
 
 for table in gold_tables:
     full_name = f"{CATALOG}.{GOLD_SCHEMA}.{table}"
@@ -63,10 +57,11 @@ if WORKSPACE_URL and TOKEN:
     genie_payload = {
         "title": "Securities Master Data",
         "description": (
-            "Ask questions about securities: products, ratings, coupons, legal entities. "
-            "Covers all product types: Equity, Debt (Bonds, Munis), Fund, Derivative, Right. "
-            "Sample questions: 'How many active equity products?', "
-            "'Show bonds maturing in 2025', 'Top 10 products by coupon rate'"
+            "Ask questions about securities in the portfolio. "
+            "Covers all asset types: Equity, Bond, Muni, Fund, Derivative. "
+            "Includes ISIN, CUSIP, coupon rate, maturity date, issuer, currency, credit ratings. "
+            "Sample questions: 'How many equity securities?', 'Show bonds maturing in 2026', "
+            "'Count securities by security_type'"
         ),
         "warehouse_id": "",  # Will use default SQL warehouse if empty
         "tables": [
@@ -124,22 +119,22 @@ else:
 print("""
 Sample questions to ask in the Genie Space:
 
-1. "How many active equity products do we have?"
-   → SELECT COUNT(*) FROM dim_product WHERE type = 'EQUITY' AND status = 'ACTIVE'
+1. "How many securities are in the portfolio by type?"
+   → SELECT type, COUNT(*) FROM securities_master GROUP BY type ORDER BY 2 DESC
 
-2. "Show all bonds with maturity date in 2025"
-   → (Genie joins to identifiers and filters on issue_currency_code/type)
+2. "Show all bonds with the highest coupon rate"
+   → SELECT product_id, description, latest_coupon_rate FROM securities_master
+      WHERE type = 'DEBT' AND sub_type = 'BOND' ORDER BY latest_coupon_rate DESC LIMIT 10
 
-3. "Which legal entities have the most products?"
-   → SELECT issuer_legal_entity_id, COUNT(*) FROM dim_product GROUP BY 1 ORDER BY 2 DESC
+3. "What is the average coupon rate by security type?"
+   → SELECT type, AVG(latest_coupon_rate) FROM securities_master GROUP BY type
 
-4. "What is the average coupon rate by bond type?"
-   → SELECT type, AVG(coupon_rate) FROM fact_coupon_schedule GROUP BY type
+4. "Which currencies appear most in the portfolio?"
+   → SELECT bond_face_currency_code, COUNT(*) FROM securities_master
+      WHERE bond_face_currency_code IS NOT NULL GROUP BY bond_face_currency_code ORDER BY 2 DESC
 
-5. "Show products with rating code AAA"
-   → SELECT p.product_id, p.description FROM dim_product p
-      JOIN fact_product_rating r ON p.product_id = r.product_id
-      WHERE r.rating_code = 'AAA'
+5. "Show securities with credit rating AAA"
+   → SELECT product_id, type, description FROM securities_master WHERE latest_rating_value = 'AAA'
 
 ✅ Genie setup complete! The space is now queryable from Databricks SQL → Genie.
 """)

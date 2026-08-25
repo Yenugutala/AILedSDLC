@@ -11,31 +11,31 @@ Unity Catalog captures table-level and column-level lineage automatically when n
 ### Viewing Lineage
 
 ```sql
--- What tables was dim_product built from? (upstream lineage)
+-- What tables was securities_master built from? (upstream lineage)
 SELECT
   source_table_full_name,
   target_table_full_name,
   entity_type
 FROM system.access.table_lineage
-WHERE target_table_full_name = 'statestreet.g_statestreet.dim_product'
+WHERE target_table_full_name = 'statestreet.g_statestreet.securities_master'
 ORDER BY event_time DESC;
 
--- What tables read from dim_product? (downstream consumers)
+-- What tables read from securities_master? (downstream consumers)
 SELECT
   source_table_full_name,
   target_table_full_name
 FROM system.access.table_lineage
-WHERE source_table_full_name = 'statestreet.g_statestreet.dim_product';
+WHERE source_table_full_name = 'statestreet.g_statestreet.securities_master';
 
--- Column-level lineage: where does dim_product.product_id come from?
+-- Column-level lineage: where does securities_master.type come from?
 SELECT
   source_table_full_name,
   source_column_name,
   target_table_full_name,
   target_column_name
 FROM system.access.column_lineage
-WHERE target_table_full_name = 'statestreet.g_statestreet.dim_product'
-  AND target_column_name = 'product_id';
+WHERE target_table_full_name = 'statestreet.g_statestreet.securities_master'
+  AND target_column_name = 'type';
 ```
 
 ### Full Lineage Graph (All Layers)
@@ -124,67 +124,54 @@ Genie uses table and column comments as semantic context for natural language qu
 
 ### Gold Table Comments (Added by Doc Agent)
 
+The Gold layer has a single wide/flat table: `statestreet.g_statestreet.securities_master`
+
 ```sql
--- dim_product: add table-level comment
-COMMENT ON TABLE statestreet.g_statestreet.dim_product IS
-  'Flattened security product dimension. One row per active security. '
+-- securities_master: table-level comment
+COMMENT ON TABLE statestreet.g_statestreet.securities_master IS
+  'Single wide gold table for Securities Master Data. '
+  'One row per active security product. '
   'Covers all product types: Equity (CommonStock, PreferredStock), '
   'Debt (Bond, Muni, PoolBackedSecurity), Fund, Listed Derivative (Option, Future), and Right. '
-  'Join to fact tables on product_id. '
-  'Source: 10 Silver tables joined on product_id.';
+  'Source: 10+ Silver tables joined on product_id.';
 
--- Column-level comments
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.product_id IS
+-- Key column-level comments
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.product_id IS
   'Unique identifier for the security product. Primary key. Format: alphanumeric string.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.type IS
-  'Top-level product type. Values: EQUITY, DEBT, FUND, DERIVATIVE, RIGHT.';
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.type IS
+  'Top-level security type. Values: EQUITY, DEBT, FUND, DERIVATIVE, RIGHT. '
+  'This is the primary dimension for portfolio composition analysis.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.status IS
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.sub_type IS
+  'Sub-category: COMMON_STOCK, PREFERRED_STOCK, BOND, MUNI, POOL_BACKED_SECURITY, OPTION, FUTURE.';
+
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.status IS
   'Lifecycle status. Values: ACTIVE (tradeable), INACTIVE, MATURED, SUSPENDED, DELISTED.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.issue_date IS
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.primary_id_type IS
+  'Type of the primary external identifier. Values: ISIN, CUSIP, SEDOL, BLOOMBERG_ID, TICKER.';
+
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.primary_identifier_value IS
+  'The value of the primary external identifier (ISIN/CUSIP/SEDOL/etc.).';
+
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.issuer_legal_name IS
+  'Legal name of the issuing entity.';
+
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.issue_date IS
   'Date when the security was first issued. DATE format (YYYY-MM-DD).';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.coupon_type IS
-  'Bond coupon type. Values: FIXED, FLOATING, ZERO_COUPON, STEP_UP. NULL for non-bonds.';
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.latest_coupon_rate IS
+  'Most recent annual coupon rate as a decimal (e.g. 0.05 = 5%). NULL for non-bonds.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.maturity_date IS
-  'Date when the bond matures. NULL for equities, funds, and perpetual bonds.';
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.latest_rating_value IS
+  'Most recent credit rating code. Values: AAA, AA+, AA, A+, A, BBB, BB, B, CCC, D. NULL if unrated.';
 
-COMMENT ON COLUMN statestreet.g_statestreet.dim_product.voting_rights IS
-  'Whether the stock has voting rights. Values: YES, NO. NULL for non-common-stock.';
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.latest_rating_agency IS
+  'Rating agency. Values: SP (Standard & Poors), Moodys, Fitch.';
 
--- fact_coupon_schedule comments
-COMMENT ON TABLE statestreet.g_statestreet.fact_coupon_schedule IS
-  'Coupon payment schedule for bond securities. '
-  'Grain: one row per bond per coupon payment date. '
-  'Join to dim_product on product_id for bond attributes.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.fact_coupon_schedule.coupon_rate IS
-  'Annual coupon rate as a decimal (e.g. 0.05 = 5%). '
-  'For FLOATING rate bonds, this is the rate as of the last reset date.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.fact_coupon_schedule.payment_date IS
-  'Date of the coupon payment. DATE format (YYYY-MM-DD).';
-
--- fact_product_rating comments
-COMMENT ON TABLE statestreet.g_statestreet.fact_product_rating IS
-  'Credit rating history for securities. '
-  'Grain: one row per product per rating agency per rating date. '
-  'Join to dim_product on product_id.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.rating_code IS
-  'Credit rating code from rating agency. '
-  'Example values: AAA, AA+, AA, AA-, A+, A, A-, BBB+, BBB, BBB-, BB, B, CCC, D.';
-
-COMMENT ON COLUMN statestreet.g_statestreet.fact_product_rating.rating_agency IS
-  'Rating agency name. Values: SP (Standard & Poors), Moodys, Fitch.';
-
--- dim_legal_entity comments
-COMMENT ON TABLE statestreet.g_statestreet.dim_legal_entity IS
-  'Legal entity dimension. One row per active legal entity (issuer, counterparty, custodian). '
-  'Join to dim_product on issuer_legal_entity_id.';
+COMMENT ON COLUMN statestreet.g_statestreet.securities_master.bond_face_currency_code IS
+  'ISO currency code of the bond face value (e.g. USD, EUR, GBP). NULL for non-bonds.';
 ```
 
 ---
@@ -196,7 +183,7 @@ Genie is Databricks AI/BI — users ask questions in natural language; Genie wri
 ### Setup via Notebook (06_setup_genie.py)
 
 ```python
-# Register Gold tables in a Genie Space
+# Register the Gold table in a Genie Space
 import requests
 
 WORKSPACE_URL = spark.conf.get("spark.databricks.workspaceUrl", "")
@@ -205,14 +192,12 @@ TOKEN = dbutils.secrets.get(scope="sml-secrets", key="databricks-token")
 genie_payload = {
     "title": "Securities Master Data",
     "description": (
-        "Ask questions about securities: products, ratings, coupons, legal entities. "
-        "Covers all product types: Equity, Debt (Bonds, Munis), Fund, Derivative, Right."
+        "Ask questions about securities in the portfolio. "
+        "Covers all asset types: Equity, Bond, Muni, Fund, Derivative. "
+        "Includes ISIN, CUSIP, coupon rate, maturity date, issuer, currency, credit ratings."
     ),
     "tables": [
-        {"catalog_name": "statestreet", "schema_name": "g_statestreet", "table_name": "dim_product"},
-        {"catalog_name": "statestreet", "schema_name": "g_statestreet", "table_name": "dim_legal_entity"},
-        {"catalog_name": "statestreet", "schema_name": "g_statestreet", "table_name": "fact_product_rating"},
-        {"catalog_name": "statestreet", "schema_name": "g_statestreet", "table_name": "fact_coupon_schedule"},
+        {"catalog_name": "statestreet", "schema_name": "g_statestreet", "table_name": "securities_master"},
     ],
 }
 
@@ -224,15 +209,17 @@ response = requests.post(
 )
 ```
 
+Or use the CLI shortcut: `sml genie --setup`
+
 ### Example Genie Queries
 
 | Natural Language Question | SQL Genie Generates |
 |--------------------------|---------------------|
-| "How many active equity products?" | `SELECT COUNT(*) FROM dim_product WHERE type='EQUITY' AND status='ACTIVE'` |
-| "Show bonds maturing in 2025" | `SELECT * FROM dim_product WHERE type='DEBT' AND YEAR(maturity_date)=2025` |
-| "Top 10 products by coupon rate" | `SELECT p.*, f.coupon_rate FROM dim_product p JOIN fact_coupon_schedule f ON p.product_id=f.product_id ORDER BY f.coupon_rate DESC LIMIT 10` |
-| "Products rated AAA by S&P" | `SELECT p.* FROM dim_product p JOIN fact_product_rating r ON p.product_id=r.product_id WHERE r.rating_code='AAA' AND r.rating_agency='SP'` |
-| "Legal entities with most products" | `SELECT issuer_legal_entity_id, COUNT(*) FROM dim_product GROUP BY 1 ORDER BY 2 DESC` |
+| "How many securities by type?" | `SELECT type, COUNT(*) FROM securities_master GROUP BY type ORDER BY 2 DESC` |
+| "How many active equity securities?" | `SELECT COUNT(*) FROM securities_master WHERE type='EQUITY' AND status='ACTIVE'` |
+| "Show bonds with the highest coupon rate" | `SELECT product_id, description, latest_coupon_rate FROM securities_master WHERE type='DEBT' ORDER BY latest_coupon_rate DESC LIMIT 10` |
+| "Securities rated AAA by S&P" | `SELECT product_id, description, type FROM securities_master WHERE latest_rating_value='AAA' AND latest_rating_agency='SP'` |
+| "Which issuers have the most securities?" | `SELECT issuer_legal_name, COUNT(*) FROM securities_master GROUP BY issuer_legal_name ORDER BY 2 DESC` |
 
 ### Access Path
 
