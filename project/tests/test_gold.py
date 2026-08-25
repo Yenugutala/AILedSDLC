@@ -1,123 +1,111 @@
 # tests/test_gold.py
 """
-Gold layer tests — net_settlement_amount column
-Table: statestreet.g_statestreet.securities_master
-Ticket: validates the new net_settlement_amount column added to the Gold mart.
+Gold layer tests — net_settlement_amount column validation.
+Validates the new net_settlement_amount column added to
+statestreet.g_statestreet.securities_master.
 
 Run against live Databricks:
     pytest tests/test_gold.py -v
 
-Requirements:
-    pip install pytest databricks-connect
-    DATABRICKS_HOST and DATABRICKS_TOKEN must be set in the environment.
+Requires either:
+  - databricks-connect configured (.databrickscfg or env vars), OR
+  - An active Databricks SparkSession (when run as a notebook job)
 """
 
 import pytest
+from pyspark.sql import SparkSession
+
 
 # ---------------------------------------------------------------------------
-# SparkSession fixture — databricks-connect with local fallback
+# Session fixture — prefers databricks-connect; falls back to local Spark
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
-def spark():
+def spark() -> SparkSession:
     """
-    Return a SparkSession connected to Databricks (databricks-connect).
-    Falls back to a local session when databricks-connect is unavailable
-    (e.g. unit-test runs in CI without a workspace configured).
+    Return a SparkSession connected to Databricks (via databricks-connect)
+    or a local session when running inside a Databricks job cluster.
     """
     try:
         from databricks.connect import DatabricksSession
-        session = DatabricksSession.builder.getOrCreate()
-    except Exception:                          # not installed or not configured
-        from pyspark.sql import SparkSession
-        session = (
-            SparkSession.builder
-            .master("local[2]")
-            .appName("test_gold_net_settlement_amount")
-            .getOrCreate()
-        )
-    yield session
-    session.stop()
+        return DatabricksSession.builder.getOrCreate()
+    except ImportError:
+        # Already running on a Databricks cluster — reuse the active session
+        return SparkSession.builder.getOrCreate()
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-GOLD_TABLE   = "statestreet.g_statestreet.securities_master"
-TARGET_COL   = "net_settlement_amount"
-# sub_types for which the formula is defined (BOND and MUNI)
+GOLD_TABLE = "statestreet.g_statestreet.securities_master"
+COLUMN_NAME = "net_settlement_amount"
+
+# Product types for which net_settlement_amount must be populated
 APPLICABLE_SUB_TYPES = ("BOND", "MUNI")
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — column exists in the schema
+# Test 1 — Column exists in the table schema
 # ---------------------------------------------------------------------------
 
-def test_net_settlement_amount_column_exists(spark):
+def test_net_settlement_amount_column_exists(spark: SparkSession) -> None:
     """
-    net_settlement_amount must be present in the Gold securities_master schema.
+    net_settlement_amount must be present as a column in
+    statestreet.g_statestreet.securities_master.
 
-    Failure mode: Developer Agent generated the table without the column,
-    or a schema migration dropped it.
+    Failure means the Gold notebook was not regenerated after the
+    ticket was applied, or the COMMENT ON COLUMN DDL truncated before
+    the column was added to the SELECT list.
     """
     df = spark.table(GOLD_TABLE)
     column_names = [field.name for field in df.schema.fields]
 
-    assert TARGET_COL in column_names, (
-        f"Column '{TARGET_COL}' is missing from {GOLD_TABLE}.\n"
-        f"Actual columns: {column_names}"
+    assert COLUMN_NAME in column_names, (
+        f"Column '{COLUMN_NAME}' not found in {GOLD_TABLE}. "
+        f"Present columns: {column_names}"
     )
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — column is non-null for BOND and MUNI rows that have coupon data
+# Test 2 — Column produces non-null values for BOND and MUNI rows
 # ---------------------------------------------------------------------------
 
-def test_net_settlement_amount_non_null_for_bond_muni(spark):
+def test_net_settlement_amount_non_null_for_bonds_and_munis(spark: SparkSession) -> None:
     """
-    net_settlement_amount must be non-null for every BOND or MUNI product
-    that has both current_face_value and a coupon record (coupon_rate is
-    available via the latest_coupon CTE in the Gold build).
+    For rows where sub_type IN ('BOND', 'MUNI') and both current_face_value
+    and coupon_rate are available, net_settlement_amount must not be NULL.
 
-    The formula applied in the Gold notebook is:
-        current_face_value * (1.0 + coupon_rate)
+    A fully-NULL result for applicable rows indicates the proxy formula
+    (current_face_value × (1 + coupon_rate)) failed to resolve — most
+    likely because the Silver coupon JOIN produced no matches or the
+    column expression evaluated to NULL for every row.
 
-    A NULL result for a qualifying row indicates either:
-      - current_face_value was NULL in Silver/Bronze
-      - coupon_rate had no matching coupon record (bond has no coupon rows)
-      - a regression introduced NULLs into the computation
-
-    Only rows where BOTH source inputs are expected to be present are checked,
-    so we first confirm at least one such row exists before asserting.
+    Acceptable: rows with NULL current_face_value or no coupon record
+                remain NULL (see GOLD-005 in known_issues.md).
     """
-    from pyspark.sql import functions as F
-
     df = spark.table(GOLD_TABLE)
 
-    # Rows that should have a non-null net_settlement_amount:
-    # sub_type IN ('BOND','MUNI') AND current_face_value IS NOT NULL
-    # AND net_settlement_amount IS NULL  →  these are violations
-    qualifying = df.filter(
-        F.col("sub_type").isin(*APPLICABLE_SUB_TYPES)
-        & F.col("current_face_value").isNotNull()
+    # Eligible rows: BOND or MUNI sub_type where both inputs to the formula exist
+    eligible = df.filter(
+        f"sub_type IN {APPLICABLE_SUB_TYPES} "
+        f"AND current_face_value IS NOT NULL "
+        f"AND bond_latest_coupon_rate IS NOT NULL"
     )
 
-    qualifying_count = qualifying.count()
+    eligible_count = eligible.count()
 
-    # Guard: if no qualifying rows at all, skip rather than silently pass.
-    # This catches the case where Silver is empty or sub_type column is wrong.
-    if qualifying_count == 0:
+    if eligible_count == 0:
         pytest.skip(
-            f"No rows in {GOLD_TABLE} with sub_type IN {APPLICABLE_SUB_TYPES} "
-            f"and non-null current_face_value — cannot validate {TARGET_COL}."
+            "No BOND/MUNI rows with both current_face_value and "
+            "bond_latest_coupon_rate populated — cannot validate formula output. "
+            "Verify Bronze/Silver ingestion completed successfully."
         )
 
-    null_violations = qualifying.filter(F.col(TARGET_COL).isNull()).count()
+    null_count = eligible.filter(f"{COLUMN_NAME} IS NULL").count()
 
-    assert null_violations == 0, (
-        f"{null_violations} of {qualifying_count} BOND/MUNI rows with a non-null "
-        f"current_face_value have NULL {TARGET_COL} in {GOLD_TABLE}.\n"
-        f"Check: (1) coupon rows exist in Silver for these bonds, "
-        f"(2) Gold build formula is CURRENT_FACE_VALUE * (1 + COUPON_RATE)."
+    assert null_count == 0, (
+        f"{null_count} of {eligible_count} eligible BOND/MUNI rows have "
+        f"NULL {COLUMN_NAME} despite current_face_value and coupon_rate being present. "
+        f"Check the CASE expression in 05_gold_build.sql (see GOLD-005 in known_issues.md)."
     )
