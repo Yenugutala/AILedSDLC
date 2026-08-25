@@ -1,37 +1,32 @@
 # tests/test_gold.py
 """
-Gold layer tests — net_settlement_amount column validation.
-Validates the new net_settlement_amount column added to
+Gold layer tests for the net_settlement_amount column added to
 statestreet.g_statestreet.securities_master.
 
-Run against live Databricks:
-    pytest tests/test_gold.py -v
-
-Requires either:
-  - databricks-connect configured (.databrickscfg or env vars), OR
-  - An active Databricks SparkSession (when run as a notebook job)
+Runs against live Databricks using databricks-connect (preferred) or a
+pre-configured SparkSession (CI / local with cluster proxy).
 """
-
 import pytest
-from pyspark.sql import SparkSession
-
 
 # ---------------------------------------------------------------------------
-# Session fixture — prefers databricks-connect; falls back to local Spark
+# Session-scoped Spark fixture
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="session")
-def spark() -> SparkSession:
-    """
-    Return a SparkSession connected to Databricks (via databricks-connect)
-    or a local session when running inside a Databricks job cluster.
-    """
+def _make_spark():
+    """Return a SparkSession, preferring databricks-connect over plain Spark."""
     try:
         from databricks.connect import DatabricksSession
         return DatabricksSession.builder.getOrCreate()
     except ImportError:
-        # Already running on a Databricks cluster — reuse the active session
+        from pyspark.sql import SparkSession
         return SparkSession.builder.getOrCreate()
+
+
+@pytest.fixture(scope="session")
+def spark():
+    session = _make_spark()
+    yield session
+    session.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -39,73 +34,69 @@ def spark() -> SparkSession:
 # ---------------------------------------------------------------------------
 
 GOLD_TABLE = "statestreet.g_statestreet.securities_master"
-COLUMN_NAME = "net_settlement_amount"
+NEW_COLUMN = "net_settlement_amount"
 
-# Product types for which net_settlement_amount must be populated
+# Security sub-types for which the column formula is defined (BOND + MUNI)
 APPLICABLE_SUB_TYPES = ("BOND", "MUNI")
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — Column exists in the table schema
+# Test 1 — Column exists in the Gold table schema
 # ---------------------------------------------------------------------------
 
-def test_net_settlement_amount_column_exists(spark: SparkSession) -> None:
+def test_net_settlement_amount_column_exists(spark):
     """
-    net_settlement_amount must be present as a column in
-    statestreet.g_statestreet.securities_master.
+    net_settlement_amount must be present in the Gold table schema.
 
-    Failure means the Gold notebook was not regenerated after the
-    ticket was applied, or the COMMENT ON COLUMN DDL truncated before
-    the column was added to the SELECT list.
+    Rationale: verifies the DDL / CTAS was applied correctly and the column
+    was not accidentally dropped in a subsequent schema migration.
     """
     df = spark.table(GOLD_TABLE)
     column_names = [field.name for field in df.schema.fields]
 
-    assert COLUMN_NAME in column_names, (
-        f"Column '{COLUMN_NAME}' not found in {GOLD_TABLE}. "
+    assert NEW_COLUMN in column_names, (
+        f"Column '{NEW_COLUMN}' not found in {GOLD_TABLE}. "
         f"Present columns: {column_names}"
     )
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — Column produces non-null values for BOND and MUNI rows
+# Test 2 — Column is non-null for BOND and MUNI security types
 # ---------------------------------------------------------------------------
 
-def test_net_settlement_amount_non_null_for_bonds_and_munis(spark: SparkSession) -> None:
+def test_net_settlement_amount_non_null_for_applicable_types(spark):
     """
-    For rows where sub_type IN ('BOND', 'MUNI') and both current_face_value
-    and coupon_rate are available, net_settlement_amount must not be NULL.
+    net_settlement_amount must be non-null for every BOND and MUNI row that
+    has both current_face_value and a latest coupon_rate populated.
 
-    A fully-NULL result for applicable rows indicates the proxy formula
-    (current_face_value × (1 + coupon_rate)) failed to resolve — most
-    likely because the Silver coupon JOIN produced no matches or the
-    column expression evaluated to NULL for every row.
-
-    Acceptable: rows with NULL current_face_value or no coupon record
-                remain NULL (see GOLD-005 in known_issues.md).
+    The formula is:  current_face_value * (1.0 + coupon_rate)
+    so any row where both inputs are non-null MUST produce a non-null result.
+    Any null value for such a row indicates a computation defect.
     """
+    from pyspark.sql import functions as F
+
     df = spark.table(GOLD_TABLE)
 
-    # Eligible rows: BOND or MUNI sub_type where both inputs to the formula exist
+    # Rows where the formula's inputs are available → result must not be null
     eligible = df.filter(
-        f"sub_type IN {APPLICABLE_SUB_TYPES} "
-        f"AND current_face_value IS NOT NULL "
-        f"AND bond_latest_coupon_rate IS NOT NULL"
+        F.col("sub_type").isin(list(APPLICABLE_SUB_TYPES))
+        & F.col("current_face_value").isNotNull()
+        & F.col("bond_coupon_rate").isNotNull()          # latest_coupon CTE column
     )
 
     eligible_count = eligible.count()
 
-    if eligible_count == 0:
-        pytest.skip(
-            "No BOND/MUNI rows with both current_face_value and "
-            "bond_latest_coupon_rate populated — cannot validate formula output. "
-            "Verify Bronze/Silver ingestion completed successfully."
-        )
+    # Guard: if no eligible rows exist the test is inconclusive, not passing
+    assert eligible_count > 0, (
+        f"No BOND/MUNI rows with non-null current_face_value AND bond_coupon_rate "
+        f"found in {GOLD_TABLE}. Cannot validate {NEW_COLUMN}. "
+        "Check that Bronze → Silver → Gold pipeline ran successfully."
+    )
 
-    null_count = eligible.filter(f"{COLUMN_NAME} IS NULL").count()
+    null_count = eligible.filter(F.col(NEW_COLUMN).isNull()).count()
 
     assert null_count == 0, (
-        f"{null_count} of {eligible_count} eligible BOND/MUNI rows have "
-        f"NULL {COLUMN_NAME} despite current_face_value and coupon_rate being present. "
-        f"Check the CASE expression in 05_gold_build.sql (see GOLD-005 in known_issues.md)."
+        f"{null_count} of {eligible_count} eligible BOND/MUNI rows have a NULL "
+        f"'{NEW_COLUMN}' despite non-null inputs. "
+        "Expected: current_face_value * (1.0 + bond_coupon_rate) for all such rows."
     )

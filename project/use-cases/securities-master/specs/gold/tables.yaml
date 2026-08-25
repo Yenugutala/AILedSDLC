@@ -2,6 +2,13 @@ tables:
 - name: securities_master
   catalog: statestreet
   schema: g_statestreet
-  description: 'Gold wide table — Securities Master analytics mart. Grain: one row
-    per active security version (is_current = TRUE).'
-  columns: []
+  description: "Gold wide table \u2014 Securities Master analytics mart. Grain: one\
+    \ row per active security version (is_current = TRUE)."
+  columns:
+  - name: net_settlement_amount
+    type: DECIMAL(18,6)
+    description: "Net cash amount due at settlement for bond and muni security types,\
+      \ calculated as principal_amount \xD7 (1 + accrued_interest_rate) from silver\
+      \ bond source. Populated only where product_type IN ('bond','muni') and is_current\
+      \ = TRUE (REQ-01, REQ-02, REQ-03, REQ-04)."
+    nullable: true
