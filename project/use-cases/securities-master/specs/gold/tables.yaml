@@ -2,6 +2,13 @@ tables:
 - name: securities_master
   catalog: statestreet
   schema: g_statestreet
-  description: 'Gold wide table — Securities Master analytics mart. Grain: one row
-    per active security version (is_current = TRUE).'
-  columns: []
+  description: "Gold wide table \u2014 Securities Master analytics mart. Grain: one\
+    \ row per active security version (is_current = TRUE)."
+  columns:
+  - name: net_settlement_amount
+    type: DECIMAL
+    description: "Net cash settlement amount for BOND and MUNI security types. Formula:\
+      \ current_face_value \xD7 (1 + coupon_rate). NULL for all other product types\
+      \ and for bonds with no coupon record. Precision: DECIMAL(18,6). Currency follows\
+      \ bond_face_currency_code."
+    nullable: true
