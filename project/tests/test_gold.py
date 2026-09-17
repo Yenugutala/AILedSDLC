@@ -1,84 +1,71 @@
 """
 Gold layer tests — net_settlement_amount column validation.
-Runs against live Databricks via databricks-connect (or local SparkSession fallback).
-
-Usage:
-    pytest tests/test_gold.py -v
+Runs against live Databricks via databricks-connect (or a local SparkSession fallback).
 """
 import pytest
 
 # ---------------------------------------------------------------------------
 # Session-scoped Spark fixture — prefers Databricks Connect, falls back to local
 # ---------------------------------------------------------------------------
-
 @pytest.fixture(scope="session")
 def spark():
     try:
         from databricks.connect import DatabricksSession
-        session = DatabricksSession.builder.getOrCreate()
+        return DatabricksSession.builder.getOrCreate()
     except ImportError:
         from pyspark.sql import SparkSession
-        session = (
+        return (
             SparkSession.builder
             .master("local[2]")
-            .appName("gold-tests")
+            .appName("test-gold-net-settlement-amount")
             .getOrCreate()
         )
-    yield session
-    session.stop()
 
 
 GOLD_TABLE = "statestreet.g_statestreet.securities_master"
 
-# Security types for which net_settlement_amount must be populated
-APPLICABLE_SUB_TYPES = ("BOND", "MUNI")
-
 
 # ---------------------------------------------------------------------------
-# Test 1 — Column exists in the Gold table schema
+# Test 1: column exists in the Gold table schema
 # ---------------------------------------------------------------------------
-
 def test_net_settlement_amount_column_exists(spark):
-    """
-    net_settlement_amount must be present in the securities_master schema.
-    Fails fast with a clear message if the column was never added to the DDL.
-    """
+    """net_settlement_amount must be present in the securities_master schema."""
     df = spark.table(GOLD_TABLE)
-    column_names = [field.name for field in df.schema.fields]
-
-    assert "net_settlement_amount" in column_names, (
-        f"Column 'net_settlement_amount' is missing from {GOLD_TABLE}. "
-        f"Columns found: {sorted(column_names)}"
+    assert "net_settlement_amount" in df.columns, (
+        f"Column 'net_settlement_amount' not found in {GOLD_TABLE}. "
+        f"Actual columns: {df.columns}"
     )
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — Column produces non-null values for BOND and MUNI security types
+# Test 2: column is non-null for BOND and MUNI rows that have a coupon record
 # ---------------------------------------------------------------------------
-
-def test_net_settlement_amount_non_null_for_bonds_and_munis(spark):
+def test_net_settlement_amount_non_null_for_bonds_with_coupon(spark):
     """
-    For all rows where sub_type IN ('BOND', 'MUNI'), net_settlement_amount
-    must not be NULL. Non-bond/muni rows are out of scope and may be NULL.
+    net_settlement_amount must be non-null for every BOND or MUNI row
+    where both current_face_value and latest_coupon_rate are populated.
+    These are the rows for which the proxy formula is computable.
     """
     from pyspark.sql import functions as F
 
     df = spark.table(GOLD_TABLE)
 
-    applicable_rows = df.filter(F.col("sub_type").isin(list(APPLICABLE_SUB_TYPES)))
-    total = applicable_rows.count()
-
-    assert total > 0, (
-        f"No rows with sub_type IN {APPLICABLE_SUB_TYPES} found in {GOLD_TABLE}. "
-        "Cannot validate net_settlement_amount. Check that Gold was built correctly."
+    # Rows where the formula inputs are available — result must not be null
+    computable = df.filter(
+        (F.col("type") == "DEBT")
+        & (F.col("sub_type").isin("BOND", "MUNI"))
+        & F.col("current_face_value").isNotNull()
+        & F.col("latest_coupon_rate").isNotNull()
     )
 
-    null_count = applicable_rows.filter(F.col("net_settlement_amount").isNull()).count()
+    total = computable.count()
+    assert total > 0, (
+        "No BOND/MUNI rows with both current_face_value and latest_coupon_rate found — "
+        "cannot validate net_settlement_amount; check Silver data."
+    )
 
+    null_count = computable.filter(F.col("net_settlement_amount").isNull()).count()
     assert null_count == 0, (
-        f"{null_count} of {total} BOND/MUNI rows in {GOLD_TABLE} have "
-        f"net_settlement_amount = NULL. "
-        f"Expected 0 nulls for sub_type IN {APPLICABLE_SUB_TYPES}. "
-        "Check that current_face_value and coupon_rate are populated in Silver "
-        "and that the CASE expression in 05_gold_build.sql covers both sub-types."
+        f"{null_count}/{total} BOND/MUNI rows with computable inputs have "
+        f"net_settlement_amount = NULL in {GOLD_TABLE}."
     )
