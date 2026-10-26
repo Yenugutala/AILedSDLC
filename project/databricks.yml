@@ -9,6 +9,21 @@ variables:
   catalog:
     description: Unity Catalog name
     default: statestreet
+  metadata_schema:
+    description: Schema for code chunks and embeddings
+    default: m_statestreet
+  github_repo:
+    description: GitHub repo (owner/name) read by the code embeddings job
+    default: Yenugutala/AILedSDLC
+  git_ref:
+    description: Branch, tag or commit to index
+    default: securities-master-dev
+  embedding_model:
+    description: OpenRouter embedding model
+    default: openai/text-embedding-3-large
+  chat_model:
+    description: OpenRouter chat model for dictionary descriptions
+    default: anthropic/claude-sonnet-4.5
 
 targets:
   dev:
@@ -55,6 +70,45 @@ resources:
         - task_key: gold_build
           notebook_task:
             notebook_path: notebooks/05_gold_build.sql
+      max_concurrent_runs: 1
+
+    code_embeddings_job:
+      name: "[SML] 07 Code Embeddings — GitHub → chunks → OpenRouter → Delta"
+      description: "Chunk repo code by structure, embed new/changed chunks, store in ${var.catalog}.${var.metadata_schema}"
+      tasks:
+        - task_key: code_embeddings
+          notebook_task:
+            notebook_path: notebooks/07_code_embeddings.py
+            base_parameters:
+              github_repo: ${var.github_repo}
+              git_ref: ${var.git_ref}
+              catalog: ${var.catalog}
+              schema: ${var.metadata_schema}
+              embedding_model: ${var.embedding_model}
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"
+        timezone_id: UTC
+        pause_status: PAUSED
+      max_concurrent_runs: 1
+
+    data_dictionary_job:
+      name: "[SML] 08 Data Dictionary & Ontology — read-only profile → relationships → Claude → Delta"
+      description: "Builds dictionary_* and ontology_* tables in ${var.catalog}.${var.metadata_schema}; never modifies lakehouse tables"
+      tasks:
+        - task_key: data_dictionary
+          notebook_task:
+            notebook_path: notebooks/08_data_dictionary_ontology.py
+            base_parameters:
+              catalog: ${var.catalog}
+              metadata_schema: ${var.metadata_schema}
+              github_repo: ${var.github_repo}
+              git_ref: ${var.git_ref}
+              chat_model: ${var.chat_model}
+              embedding_model: ${var.embedding_model}
+      schedule:
+        quartz_cron_expression: "0 30 2 * * ?"
+        timezone_id: UTC
+        pause_status: PAUSED
       max_concurrent_runs: 1
 
     orchestrate_pipeline_job:
