@@ -1,14 +1,9 @@
 """
 Gold layer tests — net_settlement_amount column validation.
-Runs against live Databricks via databricks-connect (or a supplied SparkSession).
+Runs against live Databricks via databricks-connect (or a preconfigured SparkSession).
 
 Usage:
     pytest tests/test_gold.py -v
-
-Environment (databricks-connect):
-    DATABRICKS_HOST  = https://<workspace>.azuredatabricks.net
-    DATABRICKS_TOKEN = dapi...
-    DATABRICKS_CLUSTER_ID = <cluster-id>   # or serverless
 """
 
 import pytest
@@ -20,8 +15,9 @@ import pytest
 @pytest.fixture(scope="session")
 def spark():
     """
-    Return a SparkSession connected to Databricks (databricks-connect) if
-    available, otherwise start a local session for CI dry-runs.
+    Return a SparkSession connected to Databricks (databricks-connect) when
+    available, otherwise fall back to a local session for CI environments that
+    mock the table.
     """
     try:
         from databricks.connect import DatabricksSession
@@ -31,7 +27,7 @@ def spark():
         session = (
             SparkSession.builder
             .master("local[2]")
-            .appName("test-gold-net-settlement-amount")
+            .appName("gold-tests")
             .getOrCreate()
         )
     yield session
@@ -44,7 +40,7 @@ def spark():
 
 GOLD_TABLE = "statestreet.g_statestreet.securities_master"
 COLUMN_UNDER_TEST = "net_settlement_amount"
-# Security sub-types for which the column must be non-NULL
+# Types for which net_settlement_amount must be populated
 APPLICABLE_SUB_TYPES = ("BOND", "MUNI")
 
 
@@ -55,9 +51,7 @@ APPLICABLE_SUB_TYPES = ("BOND", "MUNI")
 def test_net_settlement_amount_column_exists(spark):
     """
     net_settlement_amount must be present in securities_master schema.
-
-    Checks column presence at the schema level — no full table scan required.
-    Fails fast if the Gold build notebook omitted the column entirely.
+    Fails immediately if the Developer Agent omitted the column.
     """
     df = spark.table(GOLD_TABLE)
     column_names = [field.name for field in df.schema.fields]
@@ -69,51 +63,44 @@ def test_net_settlement_amount_column_exists(spark):
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — column is non-NULL for BOND and MUNI rows
+# Test 2 — column produces non-null values for BOND and MUNI sub-types
 # ---------------------------------------------------------------------------
 
-def test_net_settlement_amount_non_null_for_debt_securities(spark):
+def test_net_settlement_amount_non_null_for_bonds_and_munis(spark):
     """
-    net_settlement_amount must be non-NULL for every BOND and MUNI row that
-    has both current_face_value and a coupon record (i.e. the proxy formula
-    inputs are available).
+    For every row where sub_type IN ('BOND', 'MUNI'), net_settlement_amount
+    must be non-null.  NULL values for these sub-types indicate that the
+    formula (current_face_value × (1 + coupon_rate)) could not be computed,
+    which is a data quality failure in Gold.
 
-    Logic mirrors the Gold formula:
-        net_settlement_amount = current_face_value × (1 + coupon_rate)
-
-    Rows where current_face_value IS NULL or coupon_rate IS NULL are excluded
-    from the assertion — they are legitimately NULL by design (zero-coupon
-    bonds, or bonds with no coupon record ingested yet).
+    Rows where sub_type is outside APPLICABLE_SUB_TYPES are explicitly
+    excluded — NULL is the correct value for equities, funds, etc.
     """
-    from pyspark.sql import functions as F
+    sub_type_filter = ", ".join(f"'{s}'" for s in APPLICABLE_SUB_TYPES)
 
-    df = spark.table(GOLD_TABLE)
+    null_count = spark.sql(f"""
+        SELECT COUNT(*) AS cnt
+        FROM   {GOLD_TABLE}
+        WHERE  sub_type IN ({sub_type_filter})
+          AND  {COLUMN_UNDER_TEST} IS NULL
+    """).first()["cnt"]
 
-    # Rows where the formula inputs ARE available — result must be non-NULL
-    eligible = df.filter(
-        F.col("sub_type").isin(*APPLICABLE_SUB_TYPES)
-        & F.col("current_face_value").isNotNull()
-        & F.col("latest_coupon_rate").isNotNull()
+    # Confirm at least one BOND/MUNI row exists so the test is meaningful
+    total_applicable = spark.sql(f"""
+        SELECT COUNT(*) AS cnt
+        FROM   {GOLD_TABLE}
+        WHERE  sub_type IN ({sub_type_filter})
+    """).first()["cnt"]
+
+    assert total_applicable > 0, (
+        f"No rows with sub_type IN ({sub_type_filter}) found in {GOLD_TABLE}. "
+        "Cannot validate net_settlement_amount — check Bronze/Silver ingestion."
     )
-
-    eligible_count = eligible.count()
-
-    # If there are no eligible rows at all, the test data set may be empty —
-    # surface a clear message rather than silently passing.
-    assert eligible_count > 0, (
-        f"No {'/'.join(APPLICABLE_SUB_TYPES)} rows found in {GOLD_TABLE} "
-        f"with both current_face_value and latest_coupon_rate populated. "
-        f"Verify that Bronze → Silver → Gold pipeline has been run and "
-        f"that coupon data was ingested."
-    )
-
-    null_count = eligible.filter(
-        F.col(COLUMN_UNDER_TEST).isNull()
-    ).count()
 
     assert null_count == 0, (
-        f"{null_count} out of {eligible_count} eligible "
-        f"{'/'.join(APPLICABLE_SUB_TYPES)} rows have NULL '{COLUMN_UNDER_TEST}'. "
-        f"Expected 0 — check the CASE expression in 05_gold_build.sql "
-        f"for sub_type IN {APPLICABLE_SUB_TYPES}."
+        f"{null_count} of {total_applicable} BOND/MUNI rows have NULL "
+        f"'{COLUMN_UNDER_TEST}' in {GOLD_TABLE}.\n"
+        "Likely cause: current_face_value or coupon_rate is NULL in Silver "
+        "for those products.  Check statestreet.s_statestreet.product and "
+        "statestreet.s_statestreet.coupon for missing values."
     )
